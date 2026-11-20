@@ -24,11 +24,19 @@ from scipy.ndimage import gaussian_filter, sobel
 from roofphoto.geo.raster import sample
 
 
-def edge_strength(rgb: np.ndarray, sigma_px: float = 1.5) -> np.ndarray:
-    """Gradient magnitude of the smoothed grey image; rgb is (3, H, W) or (H, W)."""
+def gradients(rgb: np.ndarray, sigma_px: float = 1.5) -> tuple[np.ndarray, np.ndarray]:
+    """World-oriented gradient (gx east, gy north) of the smoothed grey image; rgb is (3, H, W) or (H, W).
+
+    Image rows run southward, so the northward gradient is minus the gradient along rows.
+    """
     grey = rgb.astype(float).mean(axis=0) if rgb.ndim == 3 else rgb.astype(float)
     g = gaussian_filter(grey, sigma_px)
-    return np.hypot(sobel(g, axis=0), sobel(g, axis=1))
+    return sobel(g, axis=1), -sobel(g, axis=0)
+
+
+def edge_strength(rgb: np.ndarray, sigma_px: float = 1.5) -> np.ndarray:
+    """Gradient magnitude, for display."""
+    return np.hypot(*gradients(rgb, sigma_px))
 
 
 @dataclass
@@ -76,20 +84,35 @@ class PieceOffset:
 
 
 def search_offsets(
-    strength: np.ndarray, transform: Affine, pieces: list[Piece], search_m: float = 1.2, step_m: float = 0.02
+    grad: tuple[np.ndarray, np.ndarray],
+    transform: Affine,
+    pieces: list[Piece],
+    search_m: float = 1.2,
+    step_m: float = 0.02,
+    centres_m: np.ndarray | None = None,
 ) -> list[PieceOffset]:
-    """For each piece, the offset along its normal that maximises mean edge strength."""
+    """For each piece, the offset along its normal where the photo has the strongest edge parallel to it.
+
+    The score is the image gradient *across* the piece, |grad . n|, averaged along the piece. A roof
+    edge has its gradient across the edge; tree texture and lines at other angles mostly do not.
+    centres_m, if given, centres each piece's search window (for a second, narrower pass).
+    """
+    gx, gy = grad
     offsets = np.arange(-search_m, search_m + step_m / 2, step_m)
     out = []
-    for p in pieces:
-        shifted = p.xy[None, :, :] + offsets[:, None, None] * p.normal  # (S, K, 2)
-        vals = sample(strength, transform, shifted[..., 0], shifted[..., 1])
-        profile = np.nanmean(vals, axis=1)
+    for j, p in enumerate(pieces):
+        trial = offsets + (0.0 if centres_m is None else centres_m[j])
+        shifted = p.xy[None, :, :] + trial[:, None, None] * p.normal  # (S, K, 2)
+        across = (
+            sample(gx, transform, shifted[..., 0], shifted[..., 1]) * p.normal[0]
+            + sample(gy, transform, shifted[..., 0], shifted[..., 1]) * p.normal[1]
+        )
+        profile = np.nanmean(np.abs(across), axis=1)
         if np.all(np.isnan(profile)):
             continue
         i = int(np.nanargmax(profile))
-        best = offsets[i]
-        if 0 < i < len(offsets) - 1:  # parabolic refinement between grid steps
+        best = trial[i]
+        if 0 < i < len(trial) - 1:  # parabolic refinement between grid steps
             y0, y1, y2 = profile[i - 1 : i + 2]
             denom = y0 - 2 * y1 + y2
             if denom < 0:
@@ -100,7 +123,7 @@ def search_offsets(
                 float(best),
                 float(profile[i]),
                 float(profile[i] / max(np.nanmedian(profile), 1e-9)),
-                i in (0, len(offsets) - 1),
+                i in (0, len(trial) - 1),
             )
         )
     return out

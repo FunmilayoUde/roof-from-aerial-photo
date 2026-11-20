@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from rasterio.transform import from_origin
 
-from roofphoto.geo.align import edge_pieces, edge_strength, fit_shift, search_offsets
+from roofphoto.geo.align import edge_pieces, fit_shift, gradients, search_offsets
 from roofphoto.geo.raster import world_to_pixel
 
 RES = 0.08
@@ -20,6 +20,21 @@ def rect_edges(bounds, z=6.0):
     return [
         SimpleNamespace(id=i, type="eave", p0=np.array([*c[i], z]), p1=np.array([*c[(i + 1) % 4], z])) for i in range(4)
     ]
+
+
+def render_polygon(corners, shift, supersample=4):
+    """A bright convex polygon (corners counter-clockwise, world xy) drawn at corners + shift, anti-aliased."""
+    t = from_origin(X0, Y0, RES, RES)
+    h, w = 300, 300
+    sub = (np.arange(supersample) + 0.5) / supersample
+    cols, rows = np.meshgrid(np.add.outer(np.arange(w), sub).ravel(), np.add.outer(np.arange(h), sub).ravel())
+    x, y = t @ (cols, rows)
+    c = np.asarray(corners) + shift
+    inside = np.ones_like(x, dtype=bool)
+    for a, b in zip(c, np.roll(c, -1, axis=0)):
+        inside &= (b[0] - a[0]) * (y - a[1]) - (b[1] - a[1]) * (x - a[0]) >= 0
+    coverage = inside.reshape(h, supersample, w, supersample).mean(axis=(1, 3))
+    return (50.0 + 150.0 * coverage)[None].repeat(3, axis=0), t
 
 
 def render_rect(bounds, shift, supersample=4):
@@ -51,7 +66,7 @@ def test_synthetic_image_is_where_we_think():
 def test_recovers_constant_shift(shift):
     img, t = render_rect(RECT, shift)
     pieces = edge_pieces(rect_edges(RECT))
-    res = search_offsets(edge_strength(img), t, pieces)
+    res = search_offsets(gradients(img), t, pieces)
     fit = fit_shift(np.array([r.piece.normal for r in res]), np.array([r.offset_m for r in res]))
     np.testing.assert_allclose(fit.s0, shift, atol=0.03)
 
@@ -59,7 +74,7 @@ def test_recovers_constant_shift(shift):
 def test_offsets_are_signed_along_the_normal():
     img, t = render_rect(RECT, (0.4, 0.0))
     pieces = edge_pieces(rect_edges(RECT))
-    res = search_offsets(edge_strength(img), t, pieces)
+    res = search_offsets(gradients(img), t, pieces)
     # Vertical edges carry the x shift: offset = n . shift, so its sign follows the normal.
     across = [r for r in res if abs(r.piece.normal[0]) > 0.9]
     assert across
@@ -83,3 +98,24 @@ def test_fit_separates_constant_shift_from_height_term():
     np.testing.assert_allclose(fit.s0, s0, atol=0.03)
     np.testing.assert_allclose(fit.v, v, atol=0.006)
     assert not fit.inliers[:10].any()
+
+
+def test_recovers_shift_on_diagonal_edges():
+    """A diamond: every edge is diagonal (the gradient sign itself is pinned by the test below)."""
+    cx, cy, r = 50_160.0, 499_769.0, 5.0
+    corners = [(cx, cy - r), (cx + r, cy), (cx, cy + r), (cx - r, cy)]
+    shift = np.array([0.35, -0.25])
+    img, t = render_polygon(corners, shift)
+    edges = [
+        SimpleNamespace(id=i, type="hip", p0=np.array([*corners[i], 6.0]), p1=np.array([*corners[(i + 1) % 4], 6.0]))
+        for i in range(4)
+    ]
+    res = search_offsets(gradients(img), t, edge_pieces(edges))
+    fit = fit_shift(np.array([r.piece.normal for r in res]), np.array([r.offset_m for r in res]))
+    np.testing.assert_allclose(fit.s0, shift, atol=0.03)
+
+
+def test_gradient_points_north_when_image_brightens_northward():
+    img = np.repeat(np.linspace(200, 0, 50)[:, None], 40, axis=1)  # bright at the top row = north
+    gx, gy = gradients(img)
+    assert gy[25, 20] > 0 and abs(gx[25, 20]) < 1e-9
