@@ -4,5 +4,5 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 # Downloads, crops and generated figures stay out of git; every one is rebuilt by a script.
-data/
-outputs/
+/data/
+/outputs/
