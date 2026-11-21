@@ -33,14 +33,13 @@ def bag_buildings(bounds: tuple[float, float, float, float], cache: Path) -> lis
     if cache.exists():
         return json.loads(cache.read_text())
     import time
-    import urllib.error
 
     query = _lidar_script("find_candidates").bag_buildings_in_bbox
     for attempt in range(6):
         try:
             feats = query(bounds)
             break
-        except (urllib.error.URLError, TimeoutError, ConnectionError):
+        except OSError:  # URLError, SSLError, timeouts and resets are all OSErrors
             if attempt == 5:
                 raise
             time.sleep(5 * 2**attempt)  # 5, 10, 20, 40, 80 s
