@@ -61,9 +61,9 @@ def main() -> None:
         t0 = time.time()
         model.train()
         tr = []
-        for img, orient, pitch in train_dl:
-            img, orient, pitch = img.to(device), orient.to(device), pitch.to(device)
-            losses = unet.loss(model(img), orient, pitch, args.pitch_weight)
+        for img, orient, pitch, roof in train_dl:
+            img, orient, pitch, roof = img.to(device), orient.to(device), pitch.to(device), roof.to(device)
+            losses = unet.loss(model(img), orient, pitch, roof, args.pitch_weight)
             opt.zero_grad()
             losses["total"].backward()
             opt.step()
@@ -72,9 +72,11 @@ def main() -> None:
         model.eval()
         va = []
         with torch.no_grad():
-            for img, orient, pitch in val_dl:
-                img, orient, pitch = img.to(device), orient.to(device), pitch.to(device)
-                va.append({k: float(v) for k, v in unet.loss(model(img), orient, pitch, args.pitch_weight).items()})
+            for img, orient, pitch, roof in val_dl:
+                img, orient, pitch, roof = img.to(device), orient.to(device), pitch.to(device), roof.to(device)
+                va.append(
+                    {k: float(v) for k, v in unet.loss(model(img), orient, pitch, roof, args.pitch_weight).items()}
+                )
         row = {"epoch": epoch, "seconds": round(time.time() - t0, 1)}
         row |= {f"train_{k}": round(float(np.mean([x[k] for x in tr])), 4) for k in tr[0]}
         row |= {f"val_{k}": round(float(np.mean([x[k] for x in va])), 4) for k in va[0]}

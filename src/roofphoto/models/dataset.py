@@ -1,6 +1,8 @@
 """Stage 4 training data: Stage 2 chips turned into per-pixel targets.
 
 Targets per pixel:
+  roof         1 this house's roof (every facet, uncertain ones included), 0 background,
+               255 neighbours: roof extent is known even where orientation isn't
   orientation  0 background, 1 flat roof (pitch < 5°), 2-9 sloped roof facing N, NE, E, SE, S,
                SW, W, NW (downhill direction, octants centred on the compass points),
                255 ignore (neighbours, low-confidence facets)
@@ -66,19 +68,20 @@ def _remap(orient: np.ndarray, fn) -> np.ndarray:
 
 
 def augment(
-    image: np.ndarray, orient: np.ndarray, pitch: np.ndarray, k_rot: int, flip_lr: bool, flip_ud: bool
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """image (C, H, W); orient, pitch (H, W). Returns copies, orientation classes remapped."""
+    image: np.ndarray, orient: np.ndarray, others: list[np.ndarray], k_rot: int, flip_lr: bool, flip_ud: bool
+) -> tuple[np.ndarray, np.ndarray, list[np.ndarray]]:
+    """image (C, H, W); orient and each of others (H, W). Returns copies; only the orientation
+    classes are remapped, the others (pitch, roof) just move with the image."""
     for _ in range(k_rot % 4):
-        image, pitch = np.rot90(image, 1, axes=(1, 2)), np.rot90(pitch)
+        image, others = np.rot90(image, 1, axes=(1, 2)), [np.rot90(o) for o in others]
         orient = _remap(np.rot90(orient), _rot90_octant)
     if flip_lr:
-        image, pitch = image[:, :, ::-1], pitch[:, ::-1]
+        image, others = image[:, :, ::-1], [o[:, ::-1] for o in others]
         orient = _remap(orient[:, ::-1], _fliplr_octant)
     if flip_ud:
-        image, pitch = image[:, ::-1, :], pitch[::-1, :]
+        image, others = image[:, ::-1, :], [o[::-1, :] for o in others]
         orient = _remap(orient[::-1, :], _flipud_octant)
-    return np.ascontiguousarray(image), np.ascontiguousarray(orient), np.ascontiguousarray(pitch)
+    return np.ascontiguousarray(image), np.ascontiguousarray(orient), [np.ascontiguousarray(o) for o in others]
 
 
 @dataclass
@@ -102,12 +105,12 @@ def kept_chips(root: Path, tiles: list[str]) -> list[Chip]:
     return chips
 
 
-def load_targets(chip: Chip) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """(image float32 (3, H, W) ImageNet-normalised, orientation uint8 (H, W), pitch float32 (H, W))."""
+def load_targets(chip: Chip) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """(image float32 (3, H, W) ImageNet-normalised, orientation uint8, pitch float32, roof uint8)."""
     with rasterio.open(chip.folder / "photo.tif") as src:
         rgb = src.read().astype(np.float32) / 255.0
     with rasterio.open(chip.folder / f"labels_{chip.labels}.tif") as src:
-        facet_band = src.read(1)
+        facet_band, roof = src.read(1), src.read(3)
     facets = json.loads((chip.folder / "facets.json").read_text())
     orient = np.where(facet_band == IGNORE, IGNORE, 0).astype(np.uint8)
     pitch = np.full(facet_band.shape, np.nan, dtype=np.float32)
@@ -118,7 +121,7 @@ def load_targets(chip: Chip) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         orient[m] = facet_class(f["pitch_deg"], f["azimuth_deg"])
         pitch[m] = f["pitch_deg"]
     image = (rgb - IMAGENET_MEAN) / IMAGENET_STD
-    return image, orient, pitch
+    return image, orient, pitch, roof
 
 
 class ChipDataset:
@@ -136,9 +139,19 @@ class ChipDataset:
     def __getitem__(self, i: int):
         import torch
 
-        image, orient, pitch = self.cache[i]
+        image, orient, pitch, roof = self.cache[i]
         if self.train:
-            image, orient, pitch = augment(
-                image, orient, pitch, int(self.rng.integers(4)), bool(self.rng.integers(2)), bool(self.rng.integers(2))
+            image, orient, (pitch, roof) = augment(
+                image,
+                orient,
+                [pitch, roof],
+                int(self.rng.integers(4)),
+                bool(self.rng.integers(2)),
+                bool(self.rng.integers(2)),
             )
-        return torch.from_numpy(image.copy()), torch.from_numpy(orient.astype(np.int64)), torch.from_numpy(pitch.copy())
+        return (
+            torch.from_numpy(image.copy()),
+            torch.from_numpy(orient.astype(np.int64)),
+            torch.from_numpy(pitch.copy()),
+            torch.from_numpy(roof.astype(np.int64)),
+        )

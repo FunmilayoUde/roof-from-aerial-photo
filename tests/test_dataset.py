@@ -32,7 +32,7 @@ def test_every_rotation_and_flip_remaps_orientation_like_the_roof(az):
     orient = np.full((n, n), facet_class(40.0, az), dtype=np.uint8)
     orient[0, 0] = IGNORE
     for k, lr, ud in itertools.product(range(4), (False, True), (False, True)):
-        img, o, h = augment(height[None], orient, height.astype(np.float32), k, lr, ud)
+        img, o, (h,) = augment(height[None], orient, [height.astype(np.float32)], k, lr, ud)
         expected = 2 + downhill_octant(img[0])
         assert set(np.unique(o)) == {expected, IGNORE}, (az, k, lr, ud)
         np.testing.assert_allclose(h, img[0], atol=1e-5)  # pitch moves with the image

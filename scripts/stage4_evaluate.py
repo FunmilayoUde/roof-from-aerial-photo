@@ -5,10 +5,14 @@
 Per test house:
   pixels   roof-mask IoU (predicted roof vs labelled roof) and orientation accuracy on labelled
            roof pixels, skipping ignore pixels;
-  area     predicted roof regions touching the house's BAG outline + 1.5 m (room for the lean),
-           converted to sloped area two ways:
+  area     the roof output's regions touching the house's BAG outline + 1.5 m (room for the
+           lean); within them the orientation output says which pixels are flat. Sloped area:
              pitch     each pixel / cos(predicted pitch)
              fallback  flat pixels as-is, sloped pixels / cos(median training pitch)
+             hybrid    footprint x (k_flat x flat share + k_pitched x (1 - flat share)): the
+                       footprint gives the size, the photo only whether the roof is flat. k_flat
+                       and k_pitched are fitted on training houses with their true flat share;
+                       test houses use the predicted one. (Uses the footprint: photo + footprint.)
            compared with the LiDAR roof area, next to baseline B1 (footprint x k, k fitted on the
            same training houses).
 Writes outputs/stage4/<run>/eval.json, per_house.csv and previews/.
@@ -57,6 +61,22 @@ def manifest(tile: str) -> dict[str, dict]:
     return {r["house_id"]: r for r in csv.DictReader(open(ROOT / "outputs/stage2" / tile / "manifest.csv"))}
 
 
+def flat_share_true(chip_folder: Path) -> float:
+    """Flat share of a house's reliable roof area, from its facets (pitch under 5°)."""
+    f = [x for x in json.loads((chip_folder / "facets.json").read_text()) if not x["ignored_in_labels"]]
+    total = sum(x["area_m2"] for x in f)
+    return sum(x["area_m2"] for x in f if x["pitch_deg"] < 5) / total if total else 0.0
+
+
+def fit_hybrid(train_rows: list[dict], train_tiles: list[str]) -> tuple[float, float]:
+    """Least squares for roof / footprint = k_flat x flat share + k_pitched x (1 - flat share)."""
+    folders = {c.house_id: c.folder for c in kept_chips(ROOT, train_tiles)}
+    f = np.array([flat_share_true(folders[r["house_id"]]) for r in train_rows])
+    y = np.array([float(r["roof_area_m2"]) / float(r["footprint_m2"]) for r in train_rows])
+    (k_flat, k_pitched), *_ = np.linalg.lstsq(np.column_stack([f, 1 - f]), y, rcond=None)
+    return float(k_flat), float(k_pitched)
+
+
 def median_training_pitch(train_tiles: list[str]) -> float:
     """Area-weighted median pitch of reliable sloped facets in the training houses."""
     p, w = [], []
@@ -90,30 +110,35 @@ def main() -> None:
         np.array([int(r["built"]) for r in train_rows]),
     )
     fallback_pitch = median_training_pitch(split["train"])
+    k_flat, k_pitched = fit_hybrid(train_rows, split["train"])
 
     rows, inter, union, correct, labelled = [], 0, 0, 0, 0
     (run / "previews").mkdir(exist_ok=True)
     for tile in split["test"]:
         fps, man = footprints(tile), manifest(tile)
         for chip in kept_chips(ROOT, [tile]):
-            image, orient, pitch_t = load_targets(chip)
+            image, orient, pitch_t, roof_t = load_targets(chip)
             with torch.no_grad():
                 out = model(torch.from_numpy(image)[None].to(device))
-            logits, pitch_p = unet.split(out)
-            cls = logits.argmax(1)[0].cpu().numpy()
+            logits, pitch_p, roof_l = unet.split(out)
+            # Within the roof, the most likely non-background orientation: flat (1) or a slope (2-9).
+            cls_roof = logits[0, 1:].argmax(0).cpu().numpy() + 1
+            roof_p = torch.sigmoid(roof_l[0]).cpu().numpy() > 0.5
+            cls = np.where(roof_p, cls_roof, 0)
             pp = np.clip(pitch_p[0].cpu().numpy(), 0, MAX_PITCH_DEG)
 
-            valid = orient != IGNORE
-            pr, tr = (cls >= 1) & valid, (orient >= 1) & valid
+            known = roof_t != IGNORE
+            pr, tr = roof_p & known, (roof_t == 1) & known
             inter += int((pr & tr).sum())
             union += int((pr | tr).sum())
-            correct += int(((cls == orient) & tr).sum())
-            labelled += int(tr.sum())
+            oriented = (orient >= 1) & (orient != IGNORE)
+            correct += int(((cls == orient) & oriented).sum())
+            labelled += int(oriented.sum())
 
             with rasterio.open(chip.folder / "photo.tif") as src:
                 t = src.transform
             seed = rasterize([(fps[chip.house_id].buffer(1.5), 1)], out_shape=cls.shape, transform=t) == 1
-            comp, _ = label(cls >= 1, structure=np.ones((3, 3)))
+            comp, _ = label(roof_p, structure=np.ones((3, 3)))
             ids = np.unique(comp[seed & (comp > 0)])
             house = np.isin(comp, ids) & (comp > 0)
             px = RES * RES
@@ -131,10 +156,19 @@ def main() -> None:
                         float((house & ~sloped).sum() * px + sloped.sum() * px / np.cos(np.radians(fallback_pitch))), 1
                     ),
                     "b1_m2": round(float(b1.b1([float(r["footprint_m2"])])[0]), 1),
+                    "hybrid_m2": round(
+                        float(r["footprint_m2"])
+                        * (
+                            k_flat * (flat_pred := float((house & ~sloped).sum() / max(house.sum(), 1)))
+                            + k_pitched * (1 - flat_pred)
+                        ),
+                        1,
+                    ),
+                    "flat_share_pred": round(flat_pred, 3),
                     "house_iou": round(float((pr & tr & house).sum() / max(((pr & house) | tr).sum(), 1)), 3),
                     "uncertain_share": float(r["uncertain_area_share"]),
                     "unlabelled_interior_share": float(r["unlabelled_interior_share"]),
-                    "flat_share": round(float(((orient == 1) & valid).sum() / max(tr.sum(), 1)), 3),
+                    "flat_share": round(float((orient == 1).sum() / max(oriented.sum(), 1)), 3),
                     "pitch_mae_deg": round(float(np.nanmean(np.abs(pp - pitch_t)[np.isfinite(pitch_t)])), 2)
                     if np.isfinite(pitch_t).any()
                     else None,
@@ -150,13 +184,14 @@ def main() -> None:
 
     truth = np.array([r["truth_m2"] for r in rows])
     clean = np.array([r["uncertain_share"] <= CLEAN_MAX_UNCERTAIN for r in rows])
-    methods = ["model_pitch_m2", "model_fallback_m2", "b1_m2", "plan_m2"]
+    methods = ["model_pitch_m2", "model_fallback_m2", "hybrid_m2", "b1_m2", "plan_m2"]
     result = {
         "run": args.run,
         "test": split["test"],
         "houses": len(rows),
         "b1_factor": round(b1.k_all, 3),
         "fallback_pitch_deg": round(fallback_pitch, 1),
+        "hybrid_factors": {"k_flat": round(k_flat, 3), "k_pitched": round(k_pitched, 3)},
         "pixels": {
             "roof_iou": round(inter / max(union, 1), 3),
             "orientation_accuracy": round(correct / max(labelled, 1), 3),
@@ -170,7 +205,9 @@ def main() -> None:
         },
     }
     # Error analysis: where does the better model variant beat or lose to B1?
-    best = min(("model_pitch_m2", "model_fallback_m2"), key=lambda m: result["area"]["all"][m]["median_abs_pct"])
+    best = min(
+        ("model_pitch_m2", "model_fallback_m2", "hybrid_m2"), key=lambda m: result["area"]["all"][m]["median_abs_pct"]
+    )
     err_m = np.abs(np.array([r[best] for r in rows]) / truth - 1)
     err_b = np.abs(np.array([r["b1_m2"] for r in rows]) / truth - 1)
     analysis = {}
