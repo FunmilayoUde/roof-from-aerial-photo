@@ -101,3 +101,11 @@ def test_candidates_are_assigned_to_one_subtile_by_centroid():
     right = find_candidates(feats, (975, -100, 2025, 100), core_bounds=(1000, -100, 2000, 100))
     assert [c.bag_id for c in left] == ["b0", "b1"]  # centroid x = 995: left core
     assert right == []
+
+
+def test_spacing_scale_leaves_delft_density_unchanged():
+    from roofphoto.data.teacher import spacing_scale
+
+    assert spacing_scale(0.162) == 1.0  # delft_02
+    assert spacing_scale(0.216) == 1.0  # delft_03, the sparsest Delft house
+    assert spacing_scale(0.287) == pytest.approx(1.8 * 0.287 / 0.3)  # typical Bilthoven house: 0.52 m radius

@@ -10,7 +10,21 @@ functions with the same settings and returns the results instead of writing file
     report    measurement_report()                                      (scripts/stage4_report.py)
     check     overhang + footprint estimate D                           (scripts/stage5_validate.py)
 
-Run on the four Delft houses, it must reproduce the LiDAR project's own report.json.
+One deliberate change, for sparse point clouds: the pipeline's distances that depend on point
+spacing (0.3 m connectivity and adjacency, 0.15 m line band, 0.75 m alpha-shape radius, 0.4 m
+touch radius) were tuned on Delft data at 25-50 points/m². At Bilthoven's ~15 points/m² the
+typical gap to a point's 4th neighbour reaches 0.3 m, the connectivity check cuts roof planes
+into fragments, and the median coverage falls to 0.53. So, per house, with spacing = the median
+4th-nearest-neighbour distance in plan:
+
+  spacing <= 0.22 m  (the density the LiDAR project validated; the sparsest Delft house is
+                      0.216 m): its settings unchanged, so the Delft reports reproduce exactly;
+  spacing  > 0.22 m: connectivity radius = 1.8 x spacing, the other spacing-dependent distances
+                      scaled by the same factor.
+
+1.8 is the middle of the range that worked (1.6-2.1) in a sweep on 60 Bilthoven houses, checked
+on 60 others. Noise-related settings (0.12 m plane threshold) and geometric ones (1 m snap
+distance) are not scaled. See docs/stage2_report.md.
 """
 
 from __future__ import annotations
@@ -21,7 +35,11 @@ import numpy as np
 from roofrecon.isolate import crop_mask, density_stats, in_polygon, non_building_inside_walls, recenter
 from roofrecon.las_io import PointData
 from roofrecon.measure import measurement_report
-from roofrecon.pipeline import build_roof
+from roofrecon.pipeline import MIN_AREA_M2, THRESHOLD_M, RoofModel, build_roof
+from roofrecon.polygons import roof_polygons
+from roofrecon.segment import segment_ransac
+from roofrecon.topology import internal_edges
+from scipy.spatial import cKDTree
 from roofrecon.validate import footprint_estimates, overhang
 from shapely.geometry import Polygon
 
@@ -29,6 +47,41 @@ BUILDING = 6
 GROUND = 2
 CROP_BUFFER_M = 1.0  # the LiDAR pipeline's default, on the plateau of its buffer sweep
 READ_MARGIN_M = 9.0  # points read around the walls: crop buffer, ground ring (to 8 m), slack
+SPACING_REF_M = 0.22  # 4th-neighbour spacing up to which the pipeline's distances are used as tuned
+CONNECT_PER_SPACING = 1.8  # connectivity radius in units of spacing, beyond SPACING_REF_M (swept)
+
+
+def point_spacing(xy: np.ndarray) -> float:
+    """Median distance (plan) to each point's 4th-nearest neighbour: the gap a connectivity
+    radius has to bridge in the sparse direction of a scan pattern, not just to the nearest point."""
+    return float(np.median(cKDTree(xy).query(xy, k=5)[0][:, 4]))
+
+
+def spacing_scale(spacing_m: float) -> float:
+    """Factor on the pipeline's spacing-dependent distances (1.0 = its validated settings)."""
+    if spacing_m <= SPACING_REF_M:
+        return 1.0
+    return max(1.0, CONNECT_PER_SPACING * spacing_m / 0.3)
+
+
+def build_roof_scaled(xyz: np.ndarray, density: float, scale: float) -> RoofModel:
+    """roofrecon's build_roof, with its spacing-dependent distances multiplied by scale."""
+    if scale == 1.0:
+        return build_roof(xyz, density)  # exactly the LiDAR project's settings
+    min_points = max(3, int(round(MIN_AREA_M2 * density)))
+    seg = segment_ransac(xyz, threshold=THRESHOLD_M, min_points=min_points, connect_radius=0.3 * scale, seed=0)
+    edges = internal_edges(xyz, seg, radius=0.3 * scale, line_band=0.15 * scale)
+    polys = roof_polygons(xyz, seg, edges, alpha_radius=0.75 * scale, touch_radius=0.4 * scale)
+    settings = {
+        "method": "ransac",
+        "threshold_m": THRESHOLD_M,
+        "min_area_m2": MIN_AREA_M2,
+        "min_points": min_points,
+        "density_pts_per_m2": round(density, 2),
+        "seed": 0,
+        "spacing_scale": round(scale, 3),
+    }
+    return RoofModel(xyz, seg, edges, polys, settings)
 
 
 @dataclass
@@ -73,8 +126,12 @@ def run_teacher(house_id: str, pts: PointData, footprint: Polygon, bag_id: str, 
     local, offset = recenter(roof.xyz)
     in_walls = local[crop_mask(roof.xyz[:, :2], footprint, 0.0)]
     density = density_stats(in_walls[:, :2], footprint.area)["nominal_pts_per_m2"]
+    spacing = point_spacing(local[:, :2])
+    scale = spacing_scale(spacing)
     stats["offset_xyz"] = offset.tolist()
     stats["density_pts_per_m2"] = density
+    stats["spacing_4nn_m"] = round(spacing, 3)
+    stats["spacing_scale"] = round(scale, 3)
 
     meta = {
         "house_id": house_id,
@@ -85,7 +142,7 @@ def run_teacher(house_id: str, pts: PointData, footprint: Polygon, bag_id: str, 
         "footprint_area_m2": round(footprint.area, 1),
     }
     try:
-        report = measurement_report(build_roof(local, density), meta)
+        report = measurement_report(build_roof_scaled(local, density, scale), meta)
     except Exception as exc:  # the pipeline was built on four houses; record what breaks on the rest
         return TeacherResult(house_id, False, f"pipeline error: {type(exc).__name__}: {exc}", None, stats)
     if not report["facets"]:
