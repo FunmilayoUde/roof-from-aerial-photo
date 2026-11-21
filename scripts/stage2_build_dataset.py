@@ -262,7 +262,9 @@ def process_house(hid, cand, pts, all_polys, tile_name, house_dir: Path, out: Pa
     }
     write_geotiff(house_dir / "photo.tif", rgb, photo_t, tags={"layer": args.layer, "attribution": ATTRIBUTION})
     for name, lab in labels.items():
-        write_geotiff(house_dir / f"labels_{name}.tif", lab, photo_t, tags={"bands": "facets,edges", "ignore": IGNORE})
+        write_geotiff(
+            house_dir / f"labels_{name}.tif", lab, photo_t, tags={"bands": "facets,edges,roof", "ignore": IGNORE}
+        )
     facets = {f["id"]: f for f in t.report["facets"]}
     (house_dir / "facets.json").write_text(
         json.dumps(
@@ -296,7 +298,7 @@ def preview(hid: str, rgb: np.ndarray, labels: dict, row: dict, path: Path) -> N
     )
     for ax, name in zip(axs[1:], ("constant", "relief")):
         ax.imshow(img)
-        fac, edg = labels[name]
+        fac, edg = labels[name][:2]
         fac_rgba = np.zeros((*fac.shape, 4))
         cmap = plt.get_cmap("tab10")
         for k in np.unique(fac):

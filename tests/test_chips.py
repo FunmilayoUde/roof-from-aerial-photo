@@ -129,7 +129,7 @@ def two_facet_house():
 
 def test_low_confidence_facets_and_untyped_edges_are_ignored():
     t, n = chip_grid((CX, CY), 16.0, RES)
-    fac, edg = rasterize_labels(two_facet_house(), constant_shift(np.zeros(2)), t, n)
+    fac, edg, _ = rasterize_labels(two_facet_house(), constant_shift(np.zeros(2)), t, n)
     assert (fac == 1).sum() == 100 * 50  # the reliable facet keeps its class
     assert (fac == IGNORE).sum() == 25 * 50  # the low-confidence one becomes ignore
     assert set(np.unique(fac)) == {0, 1, IGNORE}
@@ -142,3 +142,12 @@ def test_low_confidence_facets_and_untyped_edges_are_ignored():
     # ...but the break between a reliable and an ignored facet is kept, as is the eave.
     assert (edg == EDGE_CLASSES["break"]).sum() > 0
     assert (edg == EDGE_CLASSES["eave"]).sum() > 0
+
+
+def test_roof_band_covers_uncertain_facets_but_not_neighbours():
+    t, n = chip_grid((CX, CY), 16.0, RES)
+    neighbour = box(CX - 7.9, CY - 7.9, CX - 6.0, CY + 7.9)
+    fac, _, roof = rasterize_labels(two_facet_house(), constant_shift(np.zeros(2)), t, n, ignore=neighbour)
+    assert (roof == 1).sum() == 125 * 50  # both facets, the ignored lean-to included
+    assert ((roof == 1) & (fac == IGNORE)).sum() == 25 * 50  # roof where orientation is ignored
+    assert (roof == IGNORE).any() and not ((roof == IGNORE) & (fac != IGNORE)).any()

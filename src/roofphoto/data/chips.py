@@ -1,10 +1,12 @@
 """Training chips: a fixed-size photo crop around one house, and its labels rasterised on the same grid.
 
 Labels are drawn in *photo space*: every LiDAR vertex is moved by the house's fitted shift before
-rasterising, so label pixels sit on the roof as the photo shows it. Two bands per label file:
+rasterising, so label pixels sit on the roof as the photo shows it. Three bands per label file:
 
     band 1  facets   0 = background, k = k-th facet (report order), 255 = ignore
     band 2  edges    0 = none, EDGE_CLASSES[t] = edge type t (3 px wide lines), 255 = ignore
+    band 3  roof     0 = background, 1 = this house's roof (every facet, reliable or not),
+                     255 = neighbours only
 
 Ignore (255) covers:
   - other buildings: a chip around one house shows parts of its neighbours, which have no labels;
@@ -13,6 +15,10 @@ Ignore (255) covers:
     wrong (slivers, spill past the roof), so the loss should skip them rather than learn them;
   - untyped ('unclassified') edges, and edges with no reliable facet on either side.
 An edge between a reliable facet and an ignored one (a valley against a dormer, say) is kept.
+
+Band 3 exists because an uncertain facet is still roof: its outline and orientation are doubtful,
+but not the fact that roof is there. Without it a model gets no signal on those pixels at all,
+and learns to under-segment roofs it can't classify (Stage 4, first run).
 """
 
 from __future__ import annotations
@@ -65,7 +71,7 @@ def _burn(shapes: list[tuple[BaseGeometry, int]], transform: Affine, n: int, out
 def rasterize_labels(
     house: HouseLabels, shift: ShiftFn, transform: Affine, n: int, ignore: BaseGeometry | None = None
 ) -> np.ndarray:
-    """(2, n, n) uint8: facet band and edge band, as described in the module docstring."""
+    """(3, n, n) uint8: facet, edge and roof bands, as described in the module docstring."""
     facets = np.zeros((n, n), dtype=np.uint8)
     # Higher facets last: where facets overlap in plan, the label shows the one seen from above.
     order = sorted(range(len(house.facets)), key=lambda i: house.facets[i].polygon_xyz[:, 2].mean())
@@ -74,6 +80,7 @@ def rasterize_labels(
         f = house.facets[i]
         poly = Polygon(shift(f.polygon_xyz), [shift(h) for h in f.holes_xyz]).buffer(0)
         shapes.append((poly, IGNORE if f.confidence == "low" else i + 1))
+    # (the roof band below reuses these shapes: every facet, whatever its confidence)
     _burn(shapes, transform, n, facets)
 
     # Edges: ignored facets' areas first, then every usable edge on top of them.
@@ -88,11 +95,15 @@ def rasterize_labels(
     # Ignored lines first so a usable edge sharing their pixels wins.
     _burn(sorted(lines, key=lambda g: g[1] != IGNORE), transform, n, edges)
 
+    roof = np.zeros((n, n), dtype=np.uint8)
+    _burn([(geom, 1) for geom, _ in shapes], transform, n, roof)
+
     if ignore is not None and not ignore.is_empty:
         m = rasterize([(ignore, 1)], out_shape=(n, n), transform=transform, fill=0, dtype="uint8") == 1
         facets[m & (facets == 0)] = IGNORE
         edges[m & (edges == 0)] = IGNORE
-    return np.stack([facets, edges])
+        roof[m & (roof == 0)] = IGNORE
+    return np.stack([facets, edges, roof])
 
 
 def neighbour_ignore(neighbours: list[Polygon], buffer_m: float = 2.0) -> BaseGeometry:
