@@ -44,7 +44,14 @@ from roofphoto.data.chips import (  # noqa: E402
     rasterize_labels,
     relief_shift,
 )
-from roofphoto.data.quality import registration_checks, summarise, teacher_checks  # noqa: E402
+from roofphoto.data.quality import (  # noqa: E402
+    registration_checks,
+    relief_reliable,
+    repeat_checks,
+    repeat_diffs,
+    summarise,
+    teacher_checks,
+)
 from roofphoto.data.teacher import READ_MARGIN_M, run_teacher  # noqa: E402
 from roofphoto.geo.register import register_house  # noqa: E402
 from roofphoto.io.lidar import labels_from_report, lidar_root, read_points_multi  # noqa: E402
@@ -108,6 +115,7 @@ def main() -> None:
 
 
 def process_house(hid, cand, pts, all_polys, tile_name, house_dir: Path, out: Path, args) -> tuple[dict, dict | None]:
+    from shapely.affinity import translate
     from shapely.geometry import box, shape
 
     house_dir.mkdir(parents=True, exist_ok=True)
@@ -144,25 +152,54 @@ def process_house(hid, cand, pts, all_polys, tile_name, house_dir: Path, out: Pa
     if not photo_t.almost_equals(chip_t) or rgb.shape[1:] != (n, n):
         raise RuntimeError(f"{hid}: photo grid does not match the chip grid")
 
-    # 3. Registration and 4. quality.
+    # 3. Registration, on two JPEG renderings. PDOK encodes each request separately, and the
+    #    differences sit on edges, where registration looks (docs/stage2_report.md). A second
+    #    request offset by 7 x 5 px (not a multiple of JPEG's 8 px blocks) gives an independent
+    #    rendering of the same pixels; the two fits' disagreement measures the registration's
+    #    uncertainty, and their mean halves that noise for the labels.
     reg = register_house(house, rgb, photo_t, gz)
-    checks = teacher_checks(t.report, t.stats) + registration_checks(reg)
+    path_b = photo_path.with_name(f"{hid}_b.tif")
+    if not path_b.exists():
+        fetch_ortho(args.layer, translate(chip_box, 7 * args.res, 5 * args.res).bounds, args.res, path_b)
+    with rasterio.open(path_b) as src:
+        reg_b = register_house(house, src.read(), src.transform, gz)
+
+    # 4. Quality.
+    checks = teacher_checks(t.report, t.stats) + registration_checks(reg) + repeat_checks(reg, reg_b)
     q = summarise(checks)
     (house_dir / "quality.json").write_text(json.dumps(q, indent=2))
     row |= {"status": "kept" if q["kept"] else "dropped", "failed": q["failed"]}
     row |= {k: v["value"] for k, v in q["checks"].items()}
-    if reg is None:
+    if reg is None or reg_b is None:
         return row, None
-    s = reg.summary()
-    (house_dir / "registration.json").write_text(json.dumps({"ground_z_nap_m": gz} | s, indent=2))
-    cmp = s["model_comparison_same_pieces"]
+    s, s_b = reg.summary(), reg_b.summary()
+    s0 = (reg.const.s0 + reg_b.const.s0) / 2
+    v = (reg.pure.v + reg_b.pure.v) / 2
+    (house_dir / "registration.json").write_text(
+        json.dumps(
+            {
+                "ground_z_nap_m": gz,
+                "label_shift": {"constant_s0_m": s0.round(3).tolist(), "relief_v": v.round(4).tolist()},
+            }
+            | {"rendering_a": s, "rendering_b": s_b},
+            indent=2,
+        )
+    )
+
+    def mean_rms(key: str) -> float | None:
+        vals = [x["model_comparison_same_pieces"][key] for x in (s, s_b)]
+        return None if None in vals else round(sum(vals) / 2, 3)
+
+    rd = repeat_diffs(reg, reg_b)
     row |= {
-        "shift_e_m": s["constant_model"]["shift_m"][0],
-        "shift_n_m": s["constant_model"]["shift_m"][1],
-        "rms_constant_m": cmp["rms_constant_m"],
-        "rms_pure_relief_m": cmp["rms_pure_relief_m"],
-        "v_e": s["pure_relief_model"]["v_m_per_m"][0],
-        "v_n": s["pure_relief_model"]["v_m_per_m"][1],
+        "repeat_diff_relief_m": round(rd["relief_m"], 4),
+        "relief_labels_reliable": relief_reliable(reg, reg_b),
+        "shift_e_m": round(float(s0[0]), 3),
+        "shift_n_m": round(float(s0[1]), 3),
+        "rms_constant_m": mean_rms("rms_constant_m"),
+        "rms_pure_relief_m": mean_rms("rms_pure_relief_m"),
+        "v_e": round(float(v[0]), 4),
+        "v_n": round(float(v[1]), 4),
     }
 
     # 5. Labels, once per correction model, plus the photo chip.
@@ -170,8 +207,8 @@ def process_house(hid, cand, pts, all_polys, tile_name, house_dir: Path, out: Pa
     near = [p for p in neighbours if p.intersects(chip_box)]
     ignore = neighbour_ignore(near) if near else None
     labels = {
-        "constant": rasterize_labels(house, constant_shift(reg.const.s0), photo_t, n, ignore),
-        "relief": rasterize_labels(house, relief_shift(reg.pure.v, gz), photo_t, n, ignore),
+        "constant": rasterize_labels(house, constant_shift(s0), photo_t, n, ignore),
+        "relief": rasterize_labels(house, relief_shift(v, gz), photo_t, n, ignore),
     }
     write_geotiff(house_dir / "photo.tif", rgb, photo_t, tags={"layer": args.layer, "attribution": ATTRIBUTION})
     for name, lab in labels.items():
@@ -244,7 +281,16 @@ def summarise_run(rows: list[dict], pooled: list[dict], tile_name: str, args) ->
         "kept_roof_area_m2": round(sum(r["roof_area_m2"] for r in kept), 1),
         "kept_facets": sum(r["facets"] for r in kept),
     }
-    reg_rows = [r for r in rows if r.get("rms_constant_m") is not None and r.get("rms_pure_relief_m") is not None]
+    # Only houses whose registrations repeat on both renderings, for both models: elsewhere the
+    # comparison is decided by JPEG noise (docs/stage2_report.md).
+    reg_rows = [
+        r
+        for r in rows
+        if r.get("rms_constant_m") is not None
+        and r.get("rms_pure_relief_m") is not None
+        and r.get("relief_labels_reliable")
+        and "repeat_diff_constant_m" not in r["failed"]
+    ]
     if reg_rows:
         better = sum(r["rms_pure_relief_m"] < r["rms_constant_m"] for r in reg_rows)
         out["model_comparison"] = {

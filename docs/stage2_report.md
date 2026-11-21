@@ -2,8 +2,11 @@
 
 **Status.** The pipeline is built and runs end to end on the local Delft tile (AHN5_(withheld)),
 which holds only 7 detached-house candidates. The few hundred houses Stage 2 needs are planned
-from Bilthoven (about 680 candidates in four neighbouring sub-tiles), but its AHN5 tiles can't be
-downloaded yet: GeoTiles (geotiles.citg.tudelft.nl) returns 404 for every path since 2026-11-21.
+from Bilthoven (about 680 candidates in four neighbouring sub-tiles). GeoTiles, the source the
+LiDAR project used, returns 404 for every path since 2026-11-21. The official AHN download works
+instead: AHN's dataroom (ahn.nl/dataroom) publishes a sheet index (`bladwijzer.gpkg`) with direct
+links, served from basisdata.nl. Bilthoven is sheet **32CN1**, flown in 2023 (the photo's year),
+one 7.7 GB LAZ for the whole 5 × 6.25 km sheet; the server supports resumed downloads.
 
 ## The pipeline
 
@@ -64,14 +67,27 @@ What it means:
 - A single house's registration is uncertain by about 0.1 m in shift, and its residual can
   double. That is about the size of the difference between the two correction models.
 - **Comparing the models house by house is not reliable.** It has to be done across many houses.
-- A cheap repeatability check: download a second rendering per house (a request offset by a few
-  pixels) and register both. The disagreement is a per-house uncertainty to use in the quality
-  filter. It doubles the downloads, which take about 1 s each.
+- **Now in the pipeline:** each house is registered on two renderings, the second requested
+  with its box offset by 7 × 5 px (not a multiple of JPEG's 8 px blocks, so the server encodes
+  the same ground differently). Labels use the mean of the two fits, which halves this noise. A
+  house is kept only if its two constant shifts agree within 0.15 m (about 2 px). The pure-relief
+  fit's agreement is recorded per house (`relief_labels_reliable`) rather than used to drop the
+  house, and the model comparison only uses houses where both models repeat.
+
+Copy-to-copy gaps on the Delft tile:
+
+| house | constant shift | pure relief (at the 90th-percentile edge height) |
+|---|---|---|
+| delft_02 | 0.017 m | 0.087 m |
+| delft_03 | 0.029 m | 0.023 m |
+| delft_01 | 0.055 m | 0.18 m (relief labels flagged unreliable) |
+| delft_05 | 0.19 m (dropped) | 0.13 m |
+| delft_04 | 0.25 m (dropped) | 0.34 m |
+
+Every house dropped for repeatability also failed another check.
 
 ## Next
 
-1. Get Bilthoven's AHN5 tiles: GeoTiles when it is back, else the official AHN download (whole
-   5 × 6.25 km sheet; all four sub-tiles fall in one).
-2. Add the two-rendering repeatability check.
-3. Run on Bilthoven; set the quality thresholds from the distribution; compare the correction
+1. Download sheet 32CN1 (7.7 GB), crop it to the four sub-tiles, and delete the full sheet.
+2. Run on Bilthoven; set the quality thresholds from the distribution; compare the correction
    models across houses and by height; write the dataset statistics.

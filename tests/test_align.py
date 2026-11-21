@@ -131,3 +131,32 @@ def test_fit_through_ground_recovers_v_with_s0_fixed_at_zero():
     fit = fit_shift(normals, d, h, through_ground=True)
     np.testing.assert_allclose(fit.s0, 0.0)
     np.testing.assert_allclose(fit.v, v, atol=0.01)
+
+
+def test_repeat_diffs_measure_disagreement_between_two_registrations():
+    from roofphoto.data.quality import repeat_diffs
+    from roofphoto.geo.register import Registration
+
+    def reg(s0, v):
+        n = np.array([[1.0, 0.0], [0.0, 1.0]] * 5)
+        h = np.linspace(3, 8, 10)
+        fit_c = fit_shift(n, n @ np.asarray(s0))
+        fit_r = fit_shift(n, np.einsum("ij,ij->i", n, h[:, None] * np.asarray(v)), h, through_ground=True)
+        return Registration(
+            n,
+            n @ np.asarray(s0),
+            h,
+            np.array(["eave"] * 10),
+            10,
+            fit_c,
+            fit_r,
+            fit_c,
+            np.array([1.0, 0]),
+            np.array([0, 1.0]),
+            None,
+        )
+
+    d = repeat_diffs(reg([0.0, -0.9], [0.0, -0.10]), reg([0.06, -0.82], [0.0, -0.11]))
+    assert d["constant_m"] == pytest.approx(0.1, abs=1e-6)
+    h90 = np.percentile(np.linspace(3, 8, 10), 90)
+    assert d["relief_m"] == pytest.approx(0.01 * h90, abs=1e-6)

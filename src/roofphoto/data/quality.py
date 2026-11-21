@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
+
 from roofphoto.geo.register import Registration
 
 # Teacher
@@ -25,6 +27,7 @@ MAX_UNLABELLED_INTERIOR_SHARE = 0.05  # non-building points >0.5 m inside the wa
 MIN_PIECES_PER_AXIS = 5  # inlier edge pieces constraining each house axis
 MAX_RMS_M = 0.25  # residual of the better correction model (Delft houses: 0.07-0.23 m)
 MAX_SHIFT_M = 1.5  # beyond the Stage 1 search; larger means a mismatch, not displacement
+MAX_REPEAT_DIFF_M = 0.15  # disagreement between registrations on two JPEG renderings (~2 px)
 
 
 @dataclass
@@ -87,3 +90,31 @@ def summarise(checks: list[Check]) -> dict:
         "failed": [c.name for c in checks if not c.passed],
         "checks": {c.name: c.as_dict() for c in checks},
     }
+
+
+def repeat_diffs(a: Registration, b: Registration) -> dict[str, float]:
+    """How far two registrations of the same house (on two JPEG renderings) disagree, in metres.
+
+    Constant model: distance between the two shifts. Pure relief: difference of the two
+    displacements at the house's 90th-percentile edge height, where they differ most.
+    """
+    h90 = float(np.percentile(np.concatenate([a.h, b.h]), 90))
+    return {
+        "constant_m": float(np.hypot(*(a.const.s0 - b.const.s0))),
+        "relief_m": float(np.hypot(*(a.pure.v - b.pure.v)) * h90),
+    }
+
+
+def repeat_checks(a: Registration | None, b: Registration | None) -> list[Check]:
+    """Only the constant shift decides whether a house is kept: it is the baseline label model.
+
+    An unrepeatable pure-relief fit says that model's labels are unreliable for this house, not
+    that the house is; the caller records it as a flag (see relief_reliable).
+    """
+    if a is None or b is None:
+        return [Check("repeat_registration_found", 0, 1, False)]
+    return [_at_most("repeat_diff_constant_m", repeat_diffs(a, b)["constant_m"], MAX_REPEAT_DIFF_M)]
+
+
+def relief_reliable(a: Registration, b: Registration) -> bool:
+    return repeat_diffs(a, b)["relief_m"] <= MAX_REPEAT_DIFF_M
