@@ -12,6 +12,8 @@ dependencies = [
     "rasterio>=1.5.2",
     "requests>=2.34.2",
     "roofrecon",
+    "segmentation-models-pytorch>=0.6.0",
+    "torch>=2.15.0",
 ]
 
 [build-system]
