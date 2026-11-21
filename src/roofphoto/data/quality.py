@@ -20,7 +20,8 @@ from roofphoto.geo.register import Registration
 
 # Teacher
 MIN_COVERAGE = 0.90  # share of roof points assigned to a facet (Delft houses: 0.95-0.98)
-MAX_UNCERTAIN_AREA_SHARE = 0.25  # small or traced facets; their area error was up to 32% (p90)
+MAX_UNCERTAIN_AREA_SHARE = 0.5  # small or traced facets, marked ignore in the labels; at least half
+#                                 the roof must be reliably labelled for the house to be worth keeping
 MAX_FOOTPRINT_CHECK = 0.10  # |estimate D / report - 1| (Delft houses: 0.4-4.3%)
 MAX_UNLABELLED_INTERIOR_SHARE = 0.05  # non-building points >0.5 m inside the walls, per roof point
 # Registration

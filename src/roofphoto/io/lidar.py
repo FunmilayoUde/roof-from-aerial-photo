@@ -49,6 +49,7 @@ class Edge:
     type: str
     p0: np.ndarray  # (3,) world
     p1: np.ndarray  # (3,) world
+    facets: tuple[int, ...] = ()  # report facet ids on either side (one for an outer edge)
 
 
 @dataclass
@@ -94,6 +95,7 @@ def labels_from_report(report: dict, footprint: Polygon) -> HouseLabels:
             type=e["type"],
             p0=local_to_world(e["p0_local_m"], offset),
             p1=local_to_world(e["p1_local_m"], offset),
+            facets=tuple(e["facets"]),
         )
         for e in report["edges"]
     ]

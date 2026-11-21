@@ -109,3 +109,36 @@ def test_spacing_scale_leaves_delft_density_unchanged():
     assert spacing_scale(0.162) == 1.0  # delft_02
     assert spacing_scale(0.216) == 1.0  # delft_03, the sparsest Delft house
     assert spacing_scale(0.287) == pytest.approx(1.8 * 0.287 / 0.3)  # typical Bilthoven house: 0.52 m radius
+
+
+def two_facet_house():
+    """A reliable 8 x 4 m facet and, east of it, a low-confidence 2 x 4 m one (a traced lean-to),
+    with a break edge between them, the reliable facet's eave, and the lean-to's untyped side."""
+    z = 5.0
+    a = np.array([[CX - 4, CY - 2, z], [CX + 4, CY - 2, z], [CX + 4, CY + 2, z], [CX - 4, CY + 2, z]])
+    b = np.array([[CX + 4, CY - 2, z], [CX + 6, CY - 2, z], [CX + 6, CY + 2, z], [CX + 4, CY + 2, z]])
+    fa = Facet(id=0, polygon_xyz=a, pitch_deg=0.0, area_m2=32.0, confidence="normal", fallback=False)
+    fb = Facet(id=1, polygon_xyz=b, pitch_deg=0.0, area_m2=8.0, confidence="low", fallback=True)
+    edges = [
+        Edge(id=0, type="break", p0=a[1], p1=a[2], facets=(0, 1)),
+        Edge(id=1, type="eave", p0=a[0], p1=a[1], facets=(0,)),
+        Edge(id=2, type="unclassified", p0=b[1], p1=b[2], facets=(1,)),
+    ]
+    return HouseLabels("t", np.zeros(3), box(CX - 4, CY - 2, CX + 6, CY + 2), [fa, fb], edges)
+
+
+def test_low_confidence_facets_and_untyped_edges_are_ignored():
+    t, n = chip_grid((CX, CY), 16.0, RES)
+    fac, edg = rasterize_labels(two_facet_house(), constant_shift(np.zeros(2)), t, n)
+    assert (fac == 1).sum() == 100 * 50  # the reliable facet keeps its class
+    assert (fac == IGNORE).sum() == 25 * 50  # the low-confidence one becomes ignore
+    assert set(np.unique(fac)) == {0, 1, IGNORE}
+    # Edge band: the ignored facet's area is ignore, the untyped side is not taught as an edge...
+    assert EDGE_CLASSES["unclassified"] not in np.unique(edg)
+    c, r = world_to_pixel(t, CX + 5.0, CY)  # middle of the ignored lean-to
+    assert edg[int(r), int(c)] == IGNORE
+    c, r = world_to_pixel(t, CX + 6.0, CY)  # its untyped east side
+    assert edg[int(r), int(c) - 1] == IGNORE
+    # ...but the break between a reliable and an ignored facet is kept, as is the eave.
+    assert (edg == EDGE_CLASSES["break"]).sum() > 0
+    assert (edg == EDGE_CLASSES["eave"]).sum() > 0

@@ -267,7 +267,7 @@ def process_house(hid, cand, pts, all_polys, tile_name, house_dir: Path, out: Pa
     (house_dir / "facets.json").write_text(
         json.dumps(
             [
-                {"class": i + 1, "facet_id": f.id}
+                {"class": i + 1, "facet_id": f.id, "ignored_in_labels": f.confidence == "low"}
                 | {k: facets[f.id][k] for k in ("pitch_deg", "azimuth_deg", "area_m2", "confidence", "outline")}
                 for i, f in enumerate(house.facets)
             ],

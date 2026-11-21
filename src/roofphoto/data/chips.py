@@ -6,8 +6,13 @@ rasterising, so label pixels sit on the roof as the photo shows it. Two bands pe
     band 1  facets   0 = background, k = k-th facet (report order), 255 = ignore
     band 2  edges    0 = none, EDGE_CLASSES[t] = edge type t (3 px wide lines), 255 = ignore
 
-Ignore covers other buildings: a chip around one house shows parts of its neighbours, which have
-no labels. Calling them background would teach the model that roofs are background.
+Ignore (255) covers:
+  - other buildings: a chip around one house shows parts of its neighbours, which have no labels;
+    calling them background would teach the model that roofs are background;
+  - the house's low-confidence facets (traced outlines, or under 10 m²): their outlines are often
+    wrong (slivers, spill past the roof), so the loss should skip them rather than learn them;
+  - untyped ('unclassified') edges, and edges with no reliable facet on either side.
+An edge between a reliable facet and an ignored one (a valley against a dormer, say) is kept.
 """
 
 from __future__ import annotations
@@ -68,16 +73,20 @@ def rasterize_labels(
     for i in order:
         f = house.facets[i]
         poly = Polygon(shift(f.polygon_xyz), [shift(h) for h in f.holes_xyz]).buffer(0)
-        shapes.append((poly, i + 1))
+        shapes.append((poly, IGNORE if f.confidence == "low" else i + 1))
     _burn(shapes, transform, n, facets)
 
-    edges = np.zeros((n, n), dtype=np.uint8)
+    # Edges: ignored facets' areas first, then every usable edge on top of them.
+    edges = np.where(facets == IGNORE, IGNORE, 0).astype(np.uint8)
+    reliable = {f.id for f in house.facets if f.confidence != "low"}
     half_width = EDGE_WIDTH_PX * transform.a / 2
     lines = []
     for e in house.edges:
-        xy = shift(np.vstack([e.p0, e.p1]))
-        lines.append((LineString(xy).buffer(half_width, cap_style="flat"), EDGE_CLASSES[e.type]))
-    _burn(lines, transform, n, edges)
+        geom = LineString(shift(np.vstack([e.p0, e.p1]))).buffer(half_width, cap_style="flat")
+        usable = e.type != "unclassified" and (not e.facets or any(f in reliable for f in e.facets))
+        lines.append((geom, EDGE_CLASSES[e.type] if usable else IGNORE))
+    # Ignored lines first so a usable edge sharing their pixels wins.
+    _burn(sorted(lines, key=lambda g: g[1] != IGNORE), transform, n, edges)
 
     if ignore is not None and not ignore.is_empty:
         m = rasterize([(ignore, 1)], out_shape=(n, n), transform=transform, fill=0, dtype="uint8") == 1
