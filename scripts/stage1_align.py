@@ -97,6 +97,9 @@ def main() -> None:
     types = np.array([r.piece.edge_type for r in found])
     const = fit_shift(normals, d)
     relief = fit_shift(normals, d, h)
+    # Pure relief displacement: the ground check (stage1_ground_check.py) found ground features
+    # in place, so s0 = 0 and only v is fitted. Two parameters instead of four.
+    pure = fit_shift(normals, d, h, through_ground=True)
     draws = bootstrap(normals, d, h)
     lo, hi = np.percentile(draws, [5, 95], axis=0)
 
@@ -104,17 +107,30 @@ def main() -> None:
         shift = np.broadcast_to(fit.s0 + (0 if fit.v is None else h[:, None] * fit.v), normals.shape)
         return d - np.sum(normals * shift, axis=1)
 
-    r_const, r_relief = residual(const), residual(relief)
+    r_const, r_relief, r_pure = residual(const), residual(relief), residual(pure)
+    # Compare models on the same pieces: those that both the constant and the pure-relief fit keep.
+    common = const.inliers & pure.inliers
+
+    def rms(r: np.ndarray, m: np.ndarray) -> float:
+        return round(float(np.sqrt(np.mean(r[m] ** 2))), 3)
+
     by_type = {}
     for t in sorted(set(types)):
-        m = (types == t) & relief.inliers
+        m = (types == t) & common
         if m.any():
             by_type[t] = {
                 "pieces": int(m.sum()),
                 "median_height_m": round(float(np.median(h[m])), 2),
-                "rms_residual_constant_m": round(float(np.sqrt(np.mean(r_const[m] ** 2))), 3),
-                "rms_residual_relief_m": round(float(np.sqrt(np.mean(r_relief[m] ** 2))), 3),
+                "rms_residual_constant_m": rms(r_const, m),
+                "rms_residual_pure_relief_m": rms(r_pure, m),
+                "rms_residual_free_relief_m": rms(r_relief, m),
             }
+    comparison = {
+        "pieces": int(common.sum()),
+        "rms_constant_m": rms(r_const, common),
+        "rms_pure_relief_m": rms(r_pure, common),
+        "rms_free_relief_m": rms(r_relief, common),
+    }
 
     # The house's long axis (from the BAG outline's minimum rotated rectangle). On a rectangular
     # house nearly every edge is parallel to one of the two axes, so each axis is constrained only
@@ -157,6 +173,14 @@ def main() -> None:
             "magnitude_m": round(float(np.hypot(*const.s0)), 3),
             "rms_m": round(const.rms_m, 3),
         },
+        "pure_relief_model": {
+            "v_m_per_m": pure.v.round(4).tolist(),
+            "v_size_m_per_m": round(float(np.hypot(*pure.v)), 4),
+            "v_bearing_deg": round(float((90 - np.degrees(np.arctan2(pure.v[1], pure.v[0]))) % 360), 1),
+            "rms_m": round(pure.rms_m, 3),
+            "inliers": pure.n,
+        },
+        "model_comparison_same_pieces": comparison,
         "relief_model": {
             "s0_m": relief.s0.round(3).tolist(),
             "s0_90ci_m": [lo[:2].round(3).tolist(), hi[:2].round(3).tolist()],
@@ -184,13 +208,20 @@ def main() -> None:
         return p[:, :2] + const.s0
 
     def relief_shift(p: np.ndarray) -> np.ndarray:
-        return p[:, :2] + relief.s0 + (p[:, 2:3] - gz) * relief.v
+        return p[:, :2] + (p[:, 2:3] - gz) * pure.v
 
     crop_rgb = rgb[:, rows, cols]
     fig, axes = plt.subplots(1, 3, figsize=(18, 6.6), constrained_layout=True)
     draw_overlay(axes[0], crop_rgb, crop_t, house, title=f"{args.house_id}: LiDAR roof as is ({args.layer})")
     draw_overlay(axes[1], crop_rgb, crop_t, house, shift=const_shift, title="constant shift s0 applied")
-    draw_overlay(axes[2], crop_rgb, crop_t, house, shift=relief_shift, title="height-dependent shift s0 + h·v applied")
+    draw_overlay(
+        axes[2],
+        crop_rgb,
+        crop_t,
+        house,
+        shift=relief_shift,
+        title="relief shift h·v applied (each vertex by its height)",
+    )
     axes[2].legend(handles=legend_handles(house), loc="lower right", fontsize=7, framealpha=0.85)
     fig.text(
         0.99, 0.005, f"Photo: {ATTRIBUTION}. Roof: AHN5 (CC0) via roofrecon.", ha="right", fontsize=7, color="#555"
@@ -207,11 +238,19 @@ def main() -> None:
         cos = normals @ ax_vec
         use = np.abs(cos) > 0.9
         dd = d[use] * np.sign(cos[use])  # offset in the axis direction
-        inl = relief.inliers[use]
+        inl = common[use]
         ax.scatter(h[use][inl], dd[inl], s=16, color="#2a78d6", label="edge pieces")
         ax.scatter(h[use][~inl], dd[~inl], s=16, color="#bbb", label="outliers")
         ax.plot(hh, np.full_like(hh, const.s0 @ ax_vec), color="#555", ls="--", label="constant model")
-        ax.plot(hh, relief.s0 @ ax_vec + hh * (relief.v @ ax_vec), color="#d6572a", label="s0 + h·v model")
+        ax.plot(
+            hh,
+            relief.s0 @ ax_vec + hh * (relief.v @ ax_vec),
+            color="#d6572a",
+            lw=0.8,
+            ls=":",
+            label="s0 + h·v (free s0)",
+        )
+        ax.plot(hh, hh * (pure.v @ ax_vec), color="#d6572a", label="h·v (relief, s0 = 0)")
         ax.axhline(0, color="#999", lw=0.8)
         ax.set_xlim(0, None)
         ax.set_xlabel("height above ground, m")

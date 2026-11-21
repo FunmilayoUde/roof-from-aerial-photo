@@ -142,9 +142,17 @@ class ShiftFit:
 
 
 def fit_shift(
-    normals: np.ndarray, d: np.ndarray, h: np.ndarray | None = None, iterations: int = 5, min_cut_m: float = 0.1
+    normals: np.ndarray,
+    d: np.ndarray,
+    h: np.ndarray | None = None,
+    through_ground: bool = False,
+    iterations: int = 5,
+    min_cut_m: float = 0.1,
 ) -> ShiftFit:
-    """Least squares for n . (s0 + h v) = d (or n . s0 = d if h is None), refit without outliers.
+    """Least squares for n . (s0 + h v) = d, refit without outliers.
+
+    h None: constant shift only (n . s0 = d). through_ground: s0 fixed at zero (n . h v = d), i.e.
+    pure relief displacement, for when ground-level features are known to be in place.
 
     Outliers are pieces that locked onto the wrong line in the photo (a gutter, a shadow, a
     neighbour's roof). They are dropped at 3 robust standard deviations, but never closer than
@@ -152,7 +160,12 @@ def fit_shift(
     """
     normals = np.asarray(normals, float)
     d = np.asarray(d, float)
-    A = normals if h is None else np.column_stack([normals, normals * np.asarray(h, float)[:, None]])
+    if h is None:
+        A = normals
+    elif through_ground:
+        A = normals * np.asarray(h, float)[:, None]
+    else:
+        A = np.column_stack([normals, normals * np.asarray(h, float)[:, None]])
     keep = np.ones(len(d), dtype=bool)
     for _ in range(iterations):
         params, *_ = np.linalg.lstsq(A[keep], d[keep], rcond=None)
@@ -164,6 +177,8 @@ def fit_shift(
         keep = new_keep
     params, *_ = np.linalg.lstsq(A[keep], d[keep], rcond=None)
     r = d - A @ params
+    if h is not None and through_ground:
+        params = np.concatenate([np.zeros(2), params])
     return ShiftFit(
         s0=params[:2],
         v=None if h is None else params[2:],

@@ -119,3 +119,15 @@ def test_gradient_points_north_when_image_brightens_northward():
     img = np.repeat(np.linspace(200, 0, 50)[:, None], 40, axis=1)  # bright at the top row = north
     gx, gy = gradients(img)
     assert gy[25, 20] > 0 and abs(gx[25, 20]) < 1e-9
+
+
+def test_fit_through_ground_recovers_v_with_s0_fixed_at_zero():
+    rng = np.random.default_rng(2)
+    v = np.array([0.02, -0.12])
+    # Only two edge directions, as on a rectangular house: the case where the free-s0 fit is unstable.
+    normals = np.repeat([[0.36, 0.93], [0.93, -0.36]], [40, 6], axis=0)
+    h = rng.uniform(3, 8.5, 46)
+    d = np.einsum("ij,ij->i", normals, h[:, None] * v) + rng.normal(0, 0.03, 46)
+    fit = fit_shift(normals, d, h, through_ground=True)
+    np.testing.assert_allclose(fit.s0, 0.0)
+    np.testing.assert_allclose(fit.v, v, atol=0.01)
