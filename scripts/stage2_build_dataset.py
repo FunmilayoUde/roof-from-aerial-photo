@@ -81,8 +81,11 @@ def main() -> None:
 
     h = header_summary(args.tile)
     bounds = (h["mins"][0], h["mins"][1], h["maxs"][0], h["maxs"][1])
+    # A sub-tile cut by crop_sheet.py carries its core bounds; houses are assigned by centroid.
+    sidecar = args.tile.with_suffix(".json")
+    core = tuple(json.loads(sidecar.read_text())["core_bounds"]) if sidecar.exists() else None
     feats = bag_buildings(bounds, ROOT / "data" / "raw" / "bag" / f"{tile_name}.json")
-    cands = find_candidates(feats, bounds, args.min_area, args.max_area, args.min_gap)[: args.limit]
+    cands = find_candidates(feats, bounds, args.min_area, args.max_area, args.min_gap, core)[: args.limit]
     print(f"{tile_name}: {len(feats)} BAG buildings, {len(cands)} candidates")
     ids = {c.bag_id: f"{tile_name}_{i:04d}" for i, c in enumerate(cands)}
     with (proc / "houses_private.csv").open("w", newline="") as fh:

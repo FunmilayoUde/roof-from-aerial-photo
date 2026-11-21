@@ -53,8 +53,12 @@ def find_candidates(
     min_area: float = 70.0,
     max_area: float = 300.0,
     min_gap: float = 3.0,
+    core_bounds: tuple[float, float, float, float] | None = None,
 ) -> list[Candidate]:
+    """core_bounds: for a sub-tile cut with an overlap (scripts/crop_sheet.py), only houses whose
+    centroid lies in the core are taken, so neighbouring sub-tiles never share a house."""
     tile = box(*tile_bounds)
+    core = box(*core_bounds) if core_bounds else None
     polys = [shape(f["geometry"]) for f in feats]
     tree = STRtree(polys)
     out = []
@@ -65,6 +69,7 @@ def find_candidates(
             and pr.get("aantal_verblijfsobjecten") == 1
             and min_area <= p.area <= max_area
             and tile.contains(p.buffer(5))
+            and (core is None or core.contains(p.centroid))
         ):
             continue
         gaps = [polys[j].distance(p) for j in tree.query(p.buffer(30)) if j != i]

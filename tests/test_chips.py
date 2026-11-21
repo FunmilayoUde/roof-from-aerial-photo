@@ -84,3 +84,20 @@ def test_ignore_marks_neighbours_but_never_overwrites_labels():
     lab = rasterize_labels(house, constant_shift(np.zeros(2)), t, n, ignore=neighbour.union(overlapping))
     assert (lab[0] == IGNORE).any()
     assert (lab[0] == 1).sum() == 100 * 50  # the house's own pixels are untouched
+
+
+def test_candidates_are_assigned_to_one_subtile_by_centroid():
+    from roofphoto.data.candidates import find_candidates
+
+    def feat(i, x):
+        return {
+            "geometry": box(x, 0, x + 10, 10).__geo_interface__,
+            "properties": {"identificatie": f"b{i}", "gebruiksdoel": "woonfunctie", "aantal_verblijfsobjecten": 1},
+        }
+
+    # Two tiles share a 25 m overlap around x = 1000; a house straddles the core border.
+    feats = [feat(0, 990), feat(1, 500)]
+    left = find_candidates(feats, (-25, -100, 1025, 100), core_bounds=(0, -100, 1000, 100))
+    right = find_candidates(feats, (975, -100, 2025, 100), core_bounds=(1000, -100, 2000, 100))
+    assert [c.bag_id for c in left] == ["b0", "b1"]  # centroid x = 995: left core
+    assert right == []
