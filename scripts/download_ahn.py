@@ -35,9 +35,14 @@ def sheet_url(index: Path, sheet: str) -> str:
 
 
 def fetch_range(url: str, part: Path, start: int, end: int, attempts: int = 30) -> None:
-    """Bytes start..end (inclusive) into part, resuming from what part already holds."""
+    """Bytes start..end (inclusive) into part, resuming from what part already holds.
+
+    Gives up only after `attempts` failures in a row that added no bytes: on a flaky link a
+    connection may drop every few minutes and still make steady progress.
+    """
     want = end - start + 1
-    for attempt in range(attempts):
+    attempt = 0
+    while attempt < attempts:
         have = part.stat().st_size if part.exists() else 0
         if have >= want:
             return
@@ -50,7 +55,12 @@ def fetch_range(url: str, part: Path, start: int, end: int, attempts: int = 30) 
                     for block in r.iter_content(1 << 20):
                         fh.write(block)
         except (requests.RequestException, RuntimeError) as exc:
-            print(f"\n  {part.name}: {exc} (retry {attempt + 1})", flush=True)
+            gained = (part.stat().st_size if part.exists() else 0) > have
+            attempt = 0 if gained else attempt + 1
+            print(
+                f"\n  {part.name}: {type(exc).__name__} ({'progress kept' if gained else f'stalled {attempt}'})",
+                flush=True,
+            )
             time.sleep(min(5 * (attempt + 1), 60))
     if part.stat().st_size != want:
         raise SystemExit(f"{part.name}: incomplete after {attempts} attempts")
@@ -59,7 +69,8 @@ def fetch_range(url: str, part: Path, start: int, end: int, attempts: int = 30) 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--sheet", required=True, help="AHN sheet name, e.g. 32CN1")
-    ap.add_argument("--parts", type=int, default=8)
+    ap.add_argument("--parts", type=int, default=8, help="byte ranges; keep it fixed when resuming")
+    ap.add_argument("--workers", type=int, default=4, help="ranges fetched at once")
     ap.add_argument("--out-dir", type=Path, default=ROOT / "data" / "raw" / "ahn5")
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -82,7 +93,7 @@ def main() -> None:
     bounds = [round(i * size / args.parts) for i in range(args.parts + 1)]
     parts = [out.with_name(f"{out.name}.part{i:02d}") for i in range(args.parts)]
     t0 = time.time()
-    with ThreadPoolExecutor(args.parts) as pool:
+    with ThreadPoolExecutor(args.workers) as pool:
         futures = [pool.submit(fetch_range, url, p, bounds[i], bounds[i + 1] - 1) for i, p in enumerate(parts)]
         while not all(f.done() for f in futures):
             got = sum(p.stat().st_size for p in parts if p.exists())

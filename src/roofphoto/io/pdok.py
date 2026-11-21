@@ -42,8 +42,7 @@ def fetch_ortho(layer: str, bounds: Bounds, res: float, out_path: str | Path, ti
         "height": height,
         "format": "image/jpeg",
     }
-    r = requests.get(WMS_URL, params=params, timeout=timeout)
-    r.raise_for_status()
+    r = _get_with_retries(WMS_URL, params, timeout)
     if not r.headers.get("content-type", "").startswith("image/"):
         # WMS reports errors as XML with HTTP 200; surface it rather than saving it as an image.
         raise RuntimeError(f"PDOK returned {r.headers.get('content-type')}: {r.text[:500]}")
@@ -57,6 +56,22 @@ def fetch_ortho(layer: str, bounds: Bounds, res: float, out_path: str | Path, ti
     out_path.parent.mkdir(parents=True, exist_ok=True)
     write_geotiff(out_path, rgb, transform, tags={"layer": layer, "source": WMS_URL, "attribution": ATTRIBUTION})
     return out_path
+
+
+def _get_with_retries(url: str, params: dict, timeout: float, attempts: int = 6) -> requests.Response:
+    """GET with backoff on dropped connections and timeouts; HTTP errors are raised at once."""
+    import time
+
+    for attempt in range(attempts):
+        try:
+            r = requests.get(url, params=params, timeout=timeout)
+            r.raise_for_status()
+            return r
+        except (requests.ConnectionError, requests.Timeout):
+            if attempt == attempts - 1:
+                raise
+            time.sleep(5 * 2**attempt)  # 5, 10, 20, 40, 80 s
+    raise AssertionError("unreachable")
 
 
 def write_geotiff(path: str | Path, bands: np.ndarray, transform, tags: dict | None = None) -> None:

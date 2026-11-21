@@ -32,7 +32,18 @@ def bag_buildings(bounds: tuple[float, float, float, float], cache: Path) -> lis
     """All BAG buildings in bounds (EPSG:28992), cached as GeoJSON features."""
     if cache.exists():
         return json.loads(cache.read_text())
-    feats = _lidar_script("find_candidates").bag_buildings_in_bbox(bounds)
+    import time
+    import urllib.error
+
+    query = _lidar_script("find_candidates").bag_buildings_in_bbox
+    for attempt in range(6):
+        try:
+            feats = query(bounds)
+            break
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if attempt == 5:
+                raise
+            time.sleep(5 * 2**attempt)  # 5, 10, 20, 40, 80 s
     cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(json.dumps(feats))
     return feats
