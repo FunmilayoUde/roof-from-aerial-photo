@@ -1,93 +1,160 @@
-# Stage 2: dataset (in progress)
+# Stage 2: the dataset
 
-**Status.** The pipeline is built and runs end to end on the local Delft tile (AHN5_(withheld)),
-which holds only 7 detached-house candidates. The few hundred houses Stage 2 needs are planned
-from Bilthoven (about 680 candidates in four neighbouring sub-tiles). GeoTiles, the source the
-LiDAR project used, returns 404 for every path since 2026-11-21. The official AHN download works
-instead: AHN's dataroom (ahn.nl/dataroom) publishes a sheet index (`bladwijzer.gpkg`) with direct
-links, served from basisdata.nl. Bilthoven is sheet **32CN1**, flown in 2023 (the photo's year),
-one 7.7 GB LAZ for the whole 5 × 6.25 km sheet; the server supports resumed downloads.
+**Result.** 249 houses with photo chips and LiDAR-derived labels: 246 in Bilthoven (AHN5 sheet
+32CN1, 9 sub-tiles) and 3 in Delft. That's 57,300 m² of roof, 1,858 facets and about 35 km of
+typed edges, valleys included (the four Delft houses had none). 1,017 candidates went in; why the
+other 768 were dropped is counted below. Along the way:
 
-## The pipeline
+- the LiDAR pipeline needed one setting adapted to Bilthoven's sparser point cloud;
+- labels need registering per house, because roofs in the photo lean by 0.2–0.8 m;
+- **pure relief displacement fits better than a constant shift**, by more the taller the roof;
+- the lean is **radial around each aerial photo's nadir**, which corrects the flight-strip
+  explanation in the Stage 1 report.
 
-`scripts/stage2_build_dataset.py --tile <LAZ>` does, per detached-house candidate:
+## Data
 
-1. **Teacher.** Runs the LiDAR pipeline in memory (`roofphoto.data.teacher`), calling
-   `roofrecon`'s own functions with its settings. Nothing is written to the LiDAR folder. On the
-   four Delft houses it reproduces that project's `report.json` exactly (facets, edges, totals);
-   `tests/test_teacher.py` checks delft_03. One pass over the tile serves every house (16 s for
-   four houses, against about 40 s per house with `roofrecon`'s single-box reader).
-2. **Photo chip.** 512 × 512 px at 8 cm (40.96 m), on the photo's own pixel grid, so it is never
-   resampled.
-3. **Registration.** The Stage 1 method, now `roofphoto.geo.register`: constant and pure-relief
-   fits per house.
-4. **Quality.** Provisional checks on the teacher (coverage, share of area in small or traced
-   facets, footprint consistency, unlabelled points inside the walls) and on the registration
-   (edge pieces constraining each house axis, residual, shift size). Each records value and limit.
-5. **Labels.** Facets and edge types rasterised on the chip grid after the fitted shift, once
-   per correction model. Neighbouring buildings (outline + 2 m) are marked *ignore* (255), so
-   unlabelled roofs aren't taught as background.
-
-Candidate selection follows the LiDAR project's `find_candidates.py` (residential, one
-dwelling, 70–300 m² footprint, a gap to the next building); its BAG query is reused, not copied.
-
-## Delft tile (gap ≥ 1 m): 7 candidates
-
-| | houses |
+| | |
 |---|---|
-| kept | 3 (delft_01, delft_02, delft_03) |
-| dropped: small or traced facets hold > 25% of the area | 2 (one is delft_04, which the LiDAR project also excluded) |
-| dropped: > 5% unlabelled points inside the walls | 2 (one has trees over the roof; one is delft_05, probably its solar panels) |
+| LiDAR | AHN5 sheet 32CN1 (Bilthoven/Zeist), flown 2023, 1.27 billion points, CC0. From the official AHN distribution: ahn.nl/dataroom publishes a sheet index (`bladwijzer.gpkg`) with download links on basisdata.nl. |
+| Sub-tiles kept | 03, 04, 05, 08, 09, 10, 13, 15, 20: the nine with 40+ candidates (88% of the sheet's 1,110), each 1 × 1.25 km with a 25 m overlap. The full 7.7 GB sheet was deleted after checking the crops against it point by point. The other 16 sub-tiles held 134 candidates. |
+| Photo | PDOK `2023_orthoHR`, 8 cm, two JPEG renderings per house (see Registration). |
+| Candidates | BAG: residential, one dwelling, 70–300 m² footprint, at least 3 m from other buildings. A house belongs to the sub-tile whose core holds its centroid. |
 
-The drops look justified on the teacher side, but the unlabelled-points limit may be too strict
-for outline labels: both dropped houses' labels look well placed in their previews. Thresholds
-will be set from the Bilthoven distribution.
+GeoTiles, which the LiDAR project used, has returned 404 for every path since 2026-11-21.
+`scripts/download_ahn.py` and `scripts/crop_sheet.py` replace it with the official source.
 
-## Finding: per-house registration depends on which JPEG rendering we get
+## The teacher on sparser data
 
-PDOK serves the orthophoto only as JPEG, encoded per request. Two requests covering the same
-house, on the same 8 cm grid with zero offset, differ by about 2 grey levels on average (up to
-25), and the differences cluster at edges, which is where registration looks. Run on the two
-renderings, the same house gives:
+The LiDAR pipeline runs in memory (`roofphoto.data.teacher`), calling `roofrecon`'s functions,
+and writes nothing to the LiDAR folder. On the first Bilthoven run only 63 of 1,010 houses
+passed: the median coverage was 0.53 (Delft: 0.95–0.98), and the roof area from the BAG outline
+exceeded the pipeline's by a median of 94%.
 
-| house | constant shift (m) | residual: constant / pure relief |
+**Cause.** Several of the pipeline's distances depend on point spacing: 0.3 m connectivity,
+0.3 m facet adjacency, a 0.15 m band around edge lines, a 0.75 m alpha-shape radius, and a
+0.4 m touch radius. They were tuned on Delft data at 25–50 points/m². Bilthoven's AHN5 has about
+15 points/m², and there the typical gap to a point's 4th neighbour is 0.29 m, against 0.22 m in
+Delft. The connectivity check then cuts each roof plane into fragments, and the small fragments
+are discarded. It isn't flight strips disagreeing in height: the failing houses were each covered
+by one strip, with 4–7 cm of scatter around the plane.
+
+**Fix** (chosen with you). Per house, spacing = the median 4th-nearest-neighbour distance:
+
+- spacing ≤ 0.22 m, the density the LiDAR project validated: its settings, unchanged. The Delft
+  reports still reproduce exactly (`tests/test_teacher.py`).
+- spacing > 0.22 m: connectivity radius = **1.8 × spacing**, and the other distances above
+  scaled by the same factor. The plane threshold (sensor noise) and the 1 m snap distance
+  (geometry) stay as they are.
+
+1.8 is the middle of the range that worked in a sweep on 60 houses. It was then confirmed on 60
+other houses not used to choose it:
+
+| 60 held-out houses | original settings | adapted |
 |---|---|---|
-| delft_03, Stage 1 download | (−0.10, −0.99) | 0.109 / 0.239 m |
-| delft_03, Stage 2 download | (−0.01, −0.89) | 0.203 / 0.240 m |
-| delft_05, Stage 1 download | (−0.04, −0.77) | 0.154 / 0.076 m |
-| delft_05, Stage 2 download | (−0.19, −0.64) | 0.222 / 0.230 m |
+| pipeline ran | 51 | 60 |
+| median coverage | 0.53 | **0.957** |
+| median \|footprint check\| | 94% | **3.9%** |
+| 90th percentile \|footprint check\| | 600% | 17% |
 
-Cropping the Stage 2 download to the Stage 1 extent gives the Stage 2 answer, so it is the
-pixels, not the extent. Added Gaussian noise of similar size moves the result much less: the
-JPEG differences matter because they sit on edges, where they tip pieces between two nearby
-lines (a gutter and the roof edge, say).
+| radius, × spacing | 1.4 | 1.6 | **1.8** | 2.1 | 2.5 |
+|---|---|---|---|---|---|
+| median \|footprint check\| | 4.3% | 3.9% | 3.5% | 3.9% | 5.2% |
+| 90th percentile | 26% | 19% | 17% | 14% | 16% |
+| pass all teacher checks | 18 | 20 | 21 | 20 | 18 / 60 |
 
-What it means:
+This change belongs in `roofrecon` eventually. It was made here so the LiDAR project stays untouched.
 
-- A single house's registration is uncertain by about 0.1 m in shift, and its residual can
-  double. That is about the size of the difference between the two correction models.
-- **Comparing the models house by house is not reliable.** It has to be done across many houses.
-- **Now in the pipeline:** each house is registered on two renderings, the second requested
-  with its box offset by 7 × 5 px (not a multiple of JPEG's 8 px blocks, so the server encodes
-  the same ground differently). Labels use the mean of the two fits, which halves this noise. A
-  house is kept only if its two constant shifts agree within 0.15 m (about 2 px). The pure-relief
-  fit's agreement is recorded per house (`relief_labels_reliable`) rather than used to drop the
-  house, and the model comparison only uses houses where both models repeat.
+## Registration
 
-Copy-to-copy gaps on the Delft tile:
+Each house is registered on **two JPEG renderings** of its chip, the second requested 7 × 5 px
+off (not a multiple of JPEG's 8 px blocks), because PDOK encodes each request separately and the
+differences sit on edges, where registration looks. Labels use the mean of the two fits. A house
+is kept only if its two constant shifts agree within 0.15 m. Among kept houses the median
+copy-to-copy gap is 0.023 m (90th percentile 0.077 m).
 
-| house | constant shift | pure relief (at the 90th-percentile edge height) |
+| kept houses (246) | 10th percentile | median | 90th percentile |
+|---|---|---|---|
+| shift, photo minus LiDAR | 0.21 m | 0.47 m | 0.81 m |
+| edge residual, constant shift | 0.10 m | 0.19 m | 0.26 m |
+| edge residual, pure relief | 0.08 m | 0.16 m | 0.24 m |
+
+### Which correction model
+
+Over the 773 houses where both models repeat on both renderings, **pure relief (shift =
+height × v) fits better on 511 (66%)**. Pooled over all edge pieces:
+
+| edge height above ground | pieces | constant | pure relief |
+|---|---|---|---|
+| 0–4 m | 17,166 | 0.243 m | 0.245 m |
+| 4–6 m | 15,680 | 0.192 m | 0.191 m |
+| 6–8 m | 14,986 | 0.219 m | 0.187 m |
+| above 8 m | 9,786 | 0.272 m | 0.195 m |
+
+The gain grows with height, which is what relief displacement predicts: a constant shift has to
+compromise between low and high edges. Low edges are equally noisy under both, which is also why
+delft_03's flat extension seemed off in Stage 1. That house was among the third where the
+constant model wins, and four houses couldn't show the overall pattern. **Stage 4 should train on
+the relief labels** (`labels_relief.tif`). They're flagged unreliable for 18 of the kept houses,
+where the relief fit didn't repeat; those houses should use `labels_constant.tif`.
+
+### The lean is radial
+
+`outputs/stage2/figures/shift_map.png` draws every house's shift as an arrow. The arrows point
+**outward from a centre near RD (143.1, 461.0) km**, and from other centres to the south-west
+and south-east: roofs lean away from the nadir of whichever photo the mosaic took them from. This
+corrects the Stage 1 report, which put the north–south shifts of the four Delft houses down to
+east–west flight strips. They were radial too; those houses just lay north or south of their nadirs.
+A house's lean can therefore be **predicted** from its position relative to the nearest nadir,
+rather than fitted from its own few edges.
+
+## What was dropped, and why
+
+| status | houses |
+|---|---|
+| kept | 249 (246 Bilthoven, 3 Delft) |
+| dropped by a quality check | 699 |
+| too large for a 512 px chip with 6 m margin | 60 |
+| pipeline found no roof (no building points, or a geometry error) | 10 |
+
+The checks a house failed **on its own** (no other check failed), Bilthoven:
+
+| check | houses | what it means |
 |---|---|---|
-| delft_02 | 0.017 m | 0.087 m |
-| delft_03 | 0.029 m | 0.023 m |
-| delft_01 | 0.055 m | 0.18 m (relief labels flagged unreliable) |
-| delft_05 | 0.19 m (dropped) | 0.13 m |
-| delft_04 | 0.25 m (dropped) | 0.34 m |
+| small or traced facets > 25% of roof area | 155 | dormers, small lean-tos: the pipeline's known weak spot (23% median area error under 10 m²) |
+| unlabelled points > 5% inside the walls | 70 | trees over the roof, or roof objects AHN didn't class as building |
+| edge residual > 0.25 m | 33 | registration found no good fit |
+| coverage < 0.90 | 27 | |
+| \|footprint check\| > 10% | 24 | |
+| shift doesn't repeat across renderings | 14 | |
 
-Every house dropped for repeatability also failed another check.
+Kept per sub-tile: 34, 60, 7, 40, 46, 25, 14, 9, 11 (03 to 20). That's 19–30% of candidates
+everywhere except 05 (14%).
 
-## Next
+## Known label problems
 
-1. Download sheet 32CN1 (7.7 GB), crop it to the four sub-tiles, and delete the full sheet.
-2. Run on Bilthoven; set the quality thresholds from the distribution; compare the correction
-   models across houses and by height; write the dataset statistics.
+- **Dropping complex roofs biases the set towards simple ones.** The largest single reason is the
+  share of area in small or traced facets. Most of those houses would still give good labels for
+  their large facets. An alternative is to keep them and mark only the uncertain facets *ignore*.
+- **Unclassified edges are a quarter of all edge length** (8.7 of 35 km): the sides of traced
+  facets, which the pipeline can't type. Edge-type training will have to ignore them or treat them
+  as their own class.
+- **Buildings missing from BAG** (carports, some outbuildings) aren't marked ignore, so they
+  are taught as background.
+- **Per-house registration noise.** The two JPEG renderings disagree by 0.02 m in the median
+  but up to 0.15 m (the limit), which is 1–2 px of label jitter.
+
+## Reproduce
+
+```sh
+uv run python scripts/download_ahn.py --sheet 32CN1          # 7.7 GB, resumable
+uv run python scripts/crop_sheet.py --sheet data/raw/ahn5/2023_C_32CN1.LAZ --subtiles 03 04 05 08 09 10 13 15 20
+uv run python scripts/stage2_build_dataset.py --tile data/raw/ahn5/32CN1_04.LAZ     # per sub-tile
+uv run python scripts/stage2_build_dataset.py --min-gap 1                              # the Delft tile
+uv run python scripts/stage2_summary.py 32CN1_03 32CN1_04 32CN1_05 32CN1_08 32CN1_09 32CN1_10 32CN1_13 32CN1_15 32CN1_20
+```
+
+Per house: `data/processed/stage2/<tile>/<house>/` holds `photo.tif` (512 × 512, 8 cm),
+`labels_relief.tif` and `labels_constant.tif` (band 1 facets, band 2 edge types, 255 = ignore),
+`facets.json` (pitch, azimuth, area, confidence per facet class), and the teacher, registration
+and quality records. `outputs/stage2/<tile>/manifest.csv` lists every candidate with its status.
+BAG ids are only in the untracked `houses_private.csv`.

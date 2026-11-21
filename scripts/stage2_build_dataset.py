@@ -167,9 +167,15 @@ def fetch_chip_photos(cand, args) -> None:
 
 
 def process_house(hid, cand, pts, all_polys, tile_name, house_dir: Path, out: Path, args) -> tuple[dict, dict | None]:
+    import shutil
+
     from shapely.geometry import shape
 
-    house_dir.mkdir(parents=True, exist_ok=True)
+    # Start from an empty folder: a house that fails earlier than in a previous run must not
+    # keep that run's labels. (Photos are cached elsewhere, under data/raw.)
+    if house_dir.exists():
+        shutil.rmtree(house_dir)
+    house_dir.mkdir(parents=True)
     row = {"house_id": hid, "status": "", "failed": [], "footprint_m2": round(cand.footprint.area, 1)}
     row |= {"concavity": round(cand.concavity, 3), "built": cand.built}
 

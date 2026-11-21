@@ -112,6 +112,11 @@ dominated by a street running north-north-west, and a straight kerb only fixes t
 itself, so the correlation peak is a ridge along the street (see its `ground_check.png`). Even
 so, "no shift" wins 98% of resamples.
 
+> **Correction (Stage 2).** With 1,000 Bilthoven houses the pattern is clearly *radial*: roofs
+> lean away from the nadir of the photo the mosaic took them from (see
+> `docs/stage2_report.md`, "The lean is radial"). The flight-strip explanation below was a guess
+> from four houses that happened to lie north or south of their nadirs.
+
 Supporting signs: the north–south pattern across houses fits an orthophoto mosaic built from
 east–west flight strips. Along a strip, photos overlap heavily, so each house is seen from nearly
 overhead east–west. Across strips, a house can be hundreds of metres from the nadir, and houses
