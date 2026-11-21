@@ -8,7 +8,7 @@ RD New (EPSG:28992) x, y and NAP height z, the same system as the aerial photo.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -40,6 +40,7 @@ class Facet:
     area_m2: float
     confidence: str
     fallback: bool  # traced outline rather than plane and line intersections
+    holes_xyz: list[np.ndarray] = field(default_factory=list)  # world, e.g. curved parts left out
 
 
 @dataclass
@@ -60,18 +61,20 @@ class HouseLabels:
 
 
 def load_house(house_id: str) -> HouseLabels:
+    """A house the LiDAR project processed (its data/interim/<house_id>/)."""
     d = house_dir(house_id)
     report_path = d / "report.json"
     if not report_path.exists():
         raise FileNotFoundError(f"{report_path} missing: the LiDAR pipeline has no report for {house_id}")
-    report = json.loads(report_path.read_text())
-    if report["source"]["crs"] != CRS:
-        raise ValueError(f"{house_id}: expected {CRS}, report says {report['source']['crs']}")
-    offset = np.asarray(report["source"]["offset_xyz"], dtype=float)
-
     feature = json.loads((d / "footprint.geojson").read_text())
-    footprint = shape(feature["geometry"])
+    return labels_from_report(json.loads(report_path.read_text()), shape(feature["geometry"]))
 
+
+def labels_from_report(report: dict, footprint: Polygon) -> HouseLabels:
+    """World-coordinate labels from a roofrecon report.json (as a dict) and the BAG outline."""
+    if report["source"]["crs"] != CRS:
+        raise ValueError(f"{report['house_id']}: expected {CRS}, report says {report['source']['crs']}")
+    offset = np.asarray(report["source"]["offset_xyz"], dtype=float)
     facets = [
         Facet(
             id=f["id"],
@@ -80,6 +83,7 @@ def load_house(house_id: str) -> HouseLabels:
             area_m2=f["area_m2"],
             confidence=f["confidence"],
             fallback=f["fallback_reason"] is not None,
+            holes_xyz=[local_to_world(h, offset) for h in f.get("holes_local_m", [])],
         )
         for f in report["facets"]
         if f["vertices_local_m"]
@@ -93,7 +97,7 @@ def load_house(house_id: str) -> HouseLabels:
         )
         for e in report["edges"]
     ]
-    return HouseLabels(house_id, offset, footprint, facets, edges)
+    return HouseLabels(report["house_id"], offset, footprint, facets, edges)
 
 
 def ground_height(house_id: str, footprint: Polygon, inner_m: float = 2.0, outer_m: float = 8.0) -> dict:
@@ -153,3 +157,53 @@ def read_ground_intensity(
                     inten = np.asarray(chunk.intensity, dtype=np.float64)[ground][m]
                     parts[key].append(np.column_stack([x[m], y[m], z, inten]))
     return {k: (np.concatenate(v) if v else np.empty((0, 4))) for k, v in parts.items()}
+
+
+def read_points_multi(
+    tile: Path, bboxes: dict[str, tuple[float, float, float, float]], chunk_size: int = 2_000_000
+) -> dict:
+    """All points (every class) inside each bbox, from one pass over the tile, as roofrecon PointData.
+
+    roofrecon's read_points scans the whole tile for one bbox; for hundreds of houses that is
+    hundreds of scans. This reads the tile once and hands each house its points.
+    """
+    import laspy
+    from roofrecon.las_io import PointData, header_summary
+
+    keys = list(bboxes)
+    boxes = np.array([bboxes[k] for k in keys])
+    parts: dict[str, list[tuple]] = {k: [] for k in keys}
+    with laspy.open(tile) as f:
+        for chunk in f.chunk_iterator(chunk_size):
+            x = np.asarray(chunk.x, dtype=np.float64)
+            y = np.asarray(chunk.y, dtype=np.float64)
+            # Skip boxes that miss this chunk's extent entirely (chunks are spatially coherent in AHN).
+            near = np.nonzero(
+                (boxes[:, 0] <= x.max())
+                & (boxes[:, 2] >= x.min())
+                & (boxes[:, 1] <= y.max())
+                & (boxes[:, 3] >= y.min())
+            )[0]
+            if not len(near):
+                continue
+            z = cls = rn = nr = None
+            for i in near:
+                xmin, ymin, xmax, ymax = boxes[i]
+                m = (x >= xmin) & (x <= xmax) & (y >= ymin) & (y <= ymax)
+                if not m.any():
+                    continue
+                if z is None:
+                    z = np.asarray(chunk.z, dtype=np.float64)
+                    cls = np.asarray(chunk.classification, dtype=np.uint8)
+                    rn = np.asarray(chunk.return_number, dtype=np.uint8)
+                    nr = np.asarray(chunk.number_of_returns, dtype=np.uint8)
+                parts[keys[i]].append((np.column_stack([x[m], y[m], z[m]]), cls[m], rn[m], nr[m]))
+    header = header_summary(tile)
+    out = {}
+    for k, p in parts.items():
+        if p:
+            out[k] = PointData(*(np.concatenate([q[j] for q in p]) for j in range(4)), header)
+        else:
+            e = np.empty(0, dtype=np.uint8)
+            out[k] = PointData(np.empty((0, 3)), e, e, e, header)
+    return out

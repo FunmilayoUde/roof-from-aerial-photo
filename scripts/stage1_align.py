@@ -25,8 +25,8 @@ import numpy as np  # noqa: E402
 import rasterio  # noqa: E402
 from shapely.geometry import JOIN_STYLE  # noqa: E402
 
-from roofphoto.geo.align import bootstrap, edge_pieces, fit_shift, gradients, search_offsets  # noqa: E402
 from roofphoto.geo.raster import crop_window  # noqa: E402
+from roofphoto.geo.register import register_house  # noqa: E402
 from roofphoto.io.lidar import ground_height, load_house  # noqa: E402
 from roofphoto.io.pdok import ATTRIBUTION, fetch_ortho, write_geotiff  # noqa: E402
 from roofphoto.viz.overlay import draw_overlay, legend_handles  # noqa: E402
@@ -74,85 +74,14 @@ def main() -> None:
     ground = json.loads(ground_path.read_text())
     gz = ground["ground_z_nap_m"]
 
-    # 4. Per-piece offsets, then the two models.
-    #    'unclassified' edges come from the pipeline's traced fallback outlines, which it marks
-    #    approximate; they would measure the pipeline's error, not the photo's offset.
-    edges = [e for e in house.edges if e.type != "unclassified"]
-    pieces = edge_pieces(edges)
-    grad = gradients(rgb)
-    # Pass 1: wide search, so a large offset can be found at all.
-    first = [r for r in search_offsets(grad, transform, pieces, search_m=args.search) if not r.at_limit]
-    n1 = np.array([r.piece.normal for r in first])
-    h1 = np.array([r.piece.z - gz for r in first])
-    fit1 = fit_shift(n1, np.array([r.offset_m for r in first]), h1)
-    # Pass 2: narrow search around where pass 1 predicts each edge, which keeps pieces from
-    # locking onto a stronger line (gutter, chimney, trim) further away.
-    h_all = np.array([p.z - gz for p in pieces])
-    centres = np.einsum("ij,ij->i", np.array([p.normal for p in pieces]), fit1.s0 + h_all[:, None] * fit1.v)
-    found = search_offsets(grad, transform, pieces, search_m=args.narrow, centres_m=centres)
-    found = [r for r in found if not r.at_limit]
-    normals = np.array([r.piece.normal for r in found])
-    d = np.array([r.offset_m for r in found])
-    h = np.array([r.piece.z - gz for r in found])
-    types = np.array([r.piece.edge_type for r in found])
-    const = fit_shift(normals, d)
-    relief = fit_shift(normals, d, h)
-    # Pure relief displacement: the ground check (stage1_ground_check.py) found ground features
-    # in place, so s0 = 0 and only v is fitted. Two parameters instead of four.
-    pure = fit_shift(normals, d, h, through_ground=True)
-    draws = bootstrap(normals, d, h)
-    lo, hi = np.percentile(draws, [5, 95], axis=0)
-
-    def residual(fit) -> np.ndarray:
-        shift = np.broadcast_to(fit.s0 + (0 if fit.v is None else h[:, None] * fit.v), normals.shape)
-        return d - np.sum(normals * shift, axis=1)
-
-    r_const, r_relief, r_pure = residual(const), residual(relief), residual(pure)
-    # Compare models on the same pieces: those that both the constant and the pure-relief fit keep.
-    common = const.inliers & pure.inliers
-
-    def rms(r: np.ndarray, m: np.ndarray) -> float:
-        return round(float(np.sqrt(np.mean(r[m] ** 2))), 3)
-
-    by_type = {}
-    for t in sorted(set(types)):
-        m = (types == t) & common
-        if m.any():
-            by_type[t] = {
-                "pieces": int(m.sum()),
-                "median_height_m": round(float(np.median(h[m])), 2),
-                "rms_residual_constant_m": rms(r_const, m),
-                "rms_residual_pure_relief_m": rms(r_pure, m),
-                "rms_residual_free_relief_m": rms(r_relief, m),
-            }
-    comparison = {
-        "pieces": int(common.sum()),
-        "rms_constant_m": rms(r_const, common),
-        "rms_pure_relief_m": rms(r_pure, common),
-        "rms_free_relief_m": rms(r_relief, common),
-    }
-
-    # The house's long axis (from the BAG outline's minimum rotated rectangle). On a rectangular
-    # house nearly every edge is parallel to one of the two axes, so each axis is constrained only
-    # by the edges across it; reporting per axis shows when one direction rests on few pieces.
-    rect = np.asarray(house.footprint.minimum_rotated_rectangle.exterior.coords)[:3]
-    sides = np.diff(rect, axis=0)
-    long_side = sides[np.argmax(np.hypot(sides[:, 0], sides[:, 1]))]
-    along_dir = long_side / np.linalg.norm(long_side)
-    if along_dir[0] < 0:
-        along_dir = -along_dir
-    across_dir = np.array([-along_dir[1], along_dir[0]])
-
-    def per_axis(vec: np.ndarray) -> dict:
-        return {"along_m": round(float(vec @ along_dir), 3), "across_m": round(float(vec @ across_dir), 3)}
-
-    axis_support = {
-        name: int(((np.abs(normals @ vec) > 0.9) & relief.inliers).sum())
-        for name, vec in (("along", along_dir), ("across", across_dir))
-    }
-
-    h_eave = float(np.percentile(h, 10))
-    h_top = float(np.percentile(h, 90))
+    # 4. Per-piece offsets and the three fits (see roofphoto.geo.register).
+    reg = register_house(house, rgb, transform, gz, search_m=args.search, narrow_m=args.narrow, with_bootstrap=True)
+    if reg is None:
+        raise SystemExit(f"{args.house_id}: too few edge pieces matched to fit a shift")
+    normals, d, h = reg.normals, reg.d, reg.h
+    const, pure, relief = reg.const, reg.pure, reg.free
+    common = reg.common
+    along_dir, across_dir = reg.along_dir, reg.across_dir
     result = {
         "house_id": args.house_id,
         "photo": {
@@ -162,44 +91,7 @@ def main() -> None:
             "file": str(raw_path.relative_to(ROOT)),
         },
         "ground": ground,
-        "pieces": {
-            "first_pass": len(first),
-            "searched": len(d),
-            "inliers_constant": const.n,
-            "inliers_relief": relief.n,
-        },
-        "constant_model": {
-            "shift_m": const.s0.round(3).tolist(),
-            "magnitude_m": round(float(np.hypot(*const.s0)), 3),
-            "rms_m": round(const.rms_m, 3),
-        },
-        "pure_relief_model": {
-            "v_m_per_m": pure.v.round(4).tolist(),
-            "v_size_m_per_m": round(float(np.hypot(*pure.v)), 4),
-            "v_bearing_deg": round(float((90 - np.degrees(np.arctan2(pure.v[1], pure.v[0]))) % 360), 1),
-            "rms_m": round(pure.rms_m, 3),
-            "inliers": pure.n,
-        },
-        "model_comparison_same_pieces": comparison,
-        "relief_model": {
-            "s0_m": relief.s0.round(3).tolist(),
-            "s0_90ci_m": [lo[:2].round(3).tolist(), hi[:2].round(3).tolist()],
-            "v_m_per_m": relief.v.round(4).tolist(),
-            "v_90ci": [lo[2:].round(4).tolist(), hi[2:].round(4).tolist()],
-            "v_direction_deg_from_east": round(float(np.degrees(np.arctan2(relief.v[1], relief.v[0]))), 1),
-            "rms_m": round(relief.rms_m, 3),
-            "shift_at_heights_m": {f"{hh:.1f}": relief.shift_at(hh).round(3).tolist() for hh in (0.0, h_eave, h_top)},
-        },
-        "house_axes": {
-            "along_bearing_deg": round(float((90 - np.degrees(np.arctan2(along_dir[1], along_dir[0]))) % 360), 1),
-            "inlier_pieces_constraining": axis_support,
-            "constant_shift": per_axis(const.s0),
-            "relief_s0": per_axis(relief.s0),
-            "relief_v_per_m": per_axis(relief.v),
-        },
-        "by_edge_type": by_type,
-        "heights_above_ground_m": {"p10": round(h_eave, 2), "p90": round(h_top, 2)},
-    }
+    } | reg.summary()
     (out_dir / "alignment.json").write_text(json.dumps(result, indent=2))
     print(json.dumps(result, indent=2))
 
