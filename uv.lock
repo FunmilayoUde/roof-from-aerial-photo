@@ -1614,6 +1614,7 @@ name = "roofphoto"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "laspy", extra = ["lazrs"] },
     { name = "rasterio" },
     { name = "requests" },
     { name = "roofrecon" },
@@ -1627,6 +1628,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "laspy", extras = ["lazrs"], specifier = ">=2.5" },
     { name = "rasterio", specifier = ">=1.5.2" },
     { name = "requests", specifier = ">=2.34.2" },
     { name = "roofrecon", editable = "../3D reconstruction " },

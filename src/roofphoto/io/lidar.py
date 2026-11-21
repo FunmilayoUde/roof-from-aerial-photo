@@ -121,3 +121,35 @@ def ground_height(house_id: str, footprint: Polygon, inner_m: float = 2.0, outer
         "ground_points": int(len(ground)),
         "ring_m": [inner_m, outer_m],
     }
+
+
+def tile_path(house_id: str) -> Path:
+    stats = json.loads((house_dir(house_id) / "stats.json").read_text())
+    return lidar_root() / stats["tile"]["path"]
+
+
+def read_ground_intensity(
+    tile: Path, bboxes: dict[str, tuple[float, float, float, float]], chunk_size: int = 2_000_000
+) -> dict[str, np.ndarray]:
+    """Ground-class points (x, y, z, intensity) inside each bbox, from one pass over the tile.
+
+    roofrecon's reader drops intensity, so this reads the tile with laspy directly. One pass
+    serves every house: a tile is tens of millions of points and reading it dominates the cost.
+    """
+    import laspy
+
+    parts: dict[str, list[np.ndarray]] = {k: [] for k in bboxes}
+    with laspy.open(tile) as f:
+        for chunk in f.chunk_iterator(chunk_size):
+            ground = np.asarray(chunk.classification) == 2
+            if not ground.any():
+                continue
+            x = np.asarray(chunk.x, dtype=np.float64)[ground]
+            y = np.asarray(chunk.y, dtype=np.float64)[ground]
+            for key, (xmin, ymin, xmax, ymax) in bboxes.items():
+                m = (x >= xmin) & (x <= xmax) & (y >= ymin) & (y <= ymax)
+                if m.any():
+                    z = np.asarray(chunk.z, dtype=np.float64)[ground][m]
+                    inten = np.asarray(chunk.intensity, dtype=np.float64)[ground][m]
+                    parts[key].append(np.column_stack([x[m], y[m], z, inten]))
+    return {k: (np.concatenate(v) if v else np.empty((0, 4))) for k, v in parts.items()}

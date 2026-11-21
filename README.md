@@ -19,7 +19,7 @@ folder name ends in a space; `pyproject.toml` points at it through `[tool.uv.sou
 
 | stage | run | report |
 |---|---|---|
-| 1. Alignment | `uv run python scripts/stage1_align.py --house-id delft_03` | [docs/stage1_report.md](docs/stage1_report.md) |
+| 1. Alignment | `uv run python scripts/stage1_align.py --house-id delft_03`, then `scripts/stage1_ground_check.py` | [docs/stage1_report.md](docs/stage1_report.md) |
 
 Stage 1 downloads the PDOK photo around a house, crops it like the LiDAR pipeline does, measures
 how far the photo's roof edges sit from the LiDAR edges, and writes overlays to
@@ -33,6 +33,7 @@ src/roofphoto/
   io/lidar.py      the LiDAR pipeline's per-house outputs, in world coordinates; AHN ground height
   geo/raster.py    pixel <-> world transforms, cropping, sampling
   geo/align.py     edge-piece offset search and shift fits
+  geo/ground.py    ground-level check: LiDAR intensity vs photo, block bootstrap
   viz/overlay.py   photo + roof overlays
 scripts/           one entry point per stage
 tests/             transforms and alignment on synthetic data with known answers
