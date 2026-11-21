@@ -1,9 +1,10 @@
 # Stage 2: the dataset
 
-**Result.** 249 houses with photo chips and LiDAR-derived labels: 246 in Bilthoven (AHN5 sheet
-32CN1, 9 sub-tiles) and 3 in Delft. That's 57,300 m² of roof, 1,858 facets and about 35 km of
-typed edges, valleys included (the four Delft houses had none). 1,017 candidates went in; why the
-other 768 were dropped is counted below. Along the way:
+**Result.** 354 houses with photo chips and LiDAR-derived labels: 351 in Bilthoven (AHN5 sheet
+32CN1, 9 sub-tiles) and 3 in Delft. That's 83,100 m² of roof and 3,030 facets, valleys included
+(the four Delft houses had none). Facets the LiDAR pipeline is unsure of are marked *ignore* in
+the labels rather than dropping the whole house: 13% of roof area in the median kept house. 1,017
+candidates went in; why the other 663 were dropped is counted below. Along the way:
 
 - the LiDAR pipeline needed one setting adapted to Bilthoven's sparser point cloud;
 - labels need registering per house, because roofs in the photo lean by 0.2–0.8 m;
@@ -70,13 +71,13 @@ Each house is registered on **two JPEG renderings** of its chip, the second requ
 off (not a multiple of JPEG's 8 px blocks), because PDOK encodes each request separately and the
 differences sit on edges, where registration looks. Labels use the mean of the two fits. A house
 is kept only if its two constant shifts agree within 0.15 m. Among kept houses the median
-copy-to-copy gap is 0.023 m (90th percentile 0.077 m).
+copy-to-copy gap is 0.024 m (90th percentile 0.082 m).
 
-| kept houses (246) | 10th percentile | median | 90th percentile |
+| kept houses (351 Bilthoven) | 10th percentile | median | 90th percentile |
 |---|---|---|---|
-| shift, photo minus LiDAR | 0.21 m | 0.47 m | 0.81 m |
+| shift, photo minus LiDAR | 0.21 m | 0.46 m | 0.82 m |
 | edge residual, constant shift | 0.10 m | 0.19 m | 0.26 m |
-| edge residual, pure relief | 0.08 m | 0.16 m | 0.24 m |
+| edge residual, pure relief | 0.07 m | 0.16 m | 0.23 m |
 
 ### Which correction model
 
@@ -94,8 +95,9 @@ The gain grows with height, which is what relief displacement predicts: a consta
 compromise between low and high edges. Low edges are equally noisy under both, which is also why
 delft_03's flat extension seemed off in Stage 1. That house was among the third where the
 constant model wins, and four houses couldn't show the overall pattern. **Stage 4 should train on
-the relief labels** (`labels_relief.tif`). They're flagged unreliable for 18 of the kept houses,
-where the relief fit didn't repeat; those houses should use `labels_constant.tif`.
+the relief labels** (`labels_relief.tif`), except where the relief fit didn't repeat on both
+renderings (`relief_labels_reliable` false in the manifest); those houses should use
+`labels_constant.tif`.
 
 ### The lean is radial
 
@@ -111,8 +113,8 @@ rather than fitted from its own few edges.
 
 | status | houses |
 |---|---|
-| kept | 249 (246 Bilthoven, 3 Delft) |
-| dropped by a quality check | 699 |
+| kept | 354 (351 Bilthoven, 3 Delft) |
+| dropped by a quality check | 593 |
 | too large for a 512 px chip with 6 m margin | 60 |
 | pipeline found no roof (no building points, or a geometry error) | 10 |
 
@@ -120,24 +122,36 @@ The checks a house failed **on its own** (no other check failed), Bilthoven:
 
 | check | houses | what it means |
 |---|---|---|
-| small or traced facets > 25% of roof area | 155 | dormers, small lean-tos: the pipeline's known weak spot (23% median area error under 10 m²) |
-| unlabelled points > 5% inside the walls | 70 | trees over the roof, or roof objects AHN didn't class as building |
-| edge residual > 0.25 m | 33 | registration found no good fit |
-| coverage < 0.90 | 27 | |
-| \|footprint check\| > 10% | 24 | |
-| shift doesn't repeat across renderings | 14 | |
+| unlabelled points > 5% inside the walls | 90 | trees over the roof, or roof objects AHN didn't class as building |
+| small or traced facets > 50% of roof area | 50 | too little of the roof would be reliably labelled |
+| edge residual > 0.25 m | 47 | registration found no good fit |
+| coverage < 0.90 | 37 | |
+| \|footprint check\| > 10% | 32 | |
+| shift doesn't repeat across renderings | 27 | |
 
-Kept per sub-tile: 34, 60, 7, 40, 46, 25, 14, 9, 11 (03 to 20). That's 19–30% of candidates
-everywhere except 05 (14%).
+Kept per sub-tile: 46, 73, 14, 64, 68, 30, 24, 14, 18 (03 to 20): 23–40% of candidates. Median
+8 facets per kept house (90th percentile 15).
+
+### Uncertain facets: ignored, not dropped
+
+The pipeline marks a facet low-confidence when its outline is traced rather than closed from
+plane intersections, or when it is under 10 m². These are 4,763 of 8,835 Bilthoven facets and a
+quarter of the roof area, not just dormers. Traced outlines are often wrong for segmentation too:
+slivers, overlaps, and polygons that spill past the roof. So they are marked *ignore* (255) in
+both label bands, as are untyped edges. Edges with a reliable facet on one side, such as a valley
+against a dormer, are kept. A house is kept if at least half its roof area is reliably labelled
+(the first run dropped any house with more than a quarter uncertain). That added 105 houses, and
+the more complex roofs among them. In the median kept house 13% of the roof is ignored (90th
+percentile 39%).
 
 ## Known label problems
 
-- **Dropping complex roofs biases the set towards simple ones.** The largest single reason is the
-  share of area in small or traced facets. Most of those houses would still give good labels for
-  their large facets. An alternative is to keep them and mark only the uncertain facets *ignore*.
-- **Unclassified edges are a quarter of all edge length** (8.7 of 35 km): the sides of traced
-  facets, which the pipeline can't type. Edge-type training will have to ignore them or treat them
-  as their own class.
+- **Ignored regions hide roof boundaries too.** Where a traced facet sits at the roof's edge, the
+  roof/background boundary there is ignored, so the model learns it only from other houses.
+- **Even reliable facets can be wrong**: one checked house has a normal-confidence facet reaching
+  out over the lawn. The footprint check only catches large errors.
+- **Houses whose roofs are mostly uncertain are still dropped** (50 on that check alone), so the
+  set still leans towards simpler roofs, though much less than before.
 - **Buildings missing from BAG** (carports, some outbuildings) aren't marked ignore, so they
   are taught as background.
 - **Per-house registration noise.** The two JPEG renderings disagree by 0.02 m in the median
@@ -154,7 +168,8 @@ uv run python scripts/stage2_summary.py 32CN1_03 32CN1_04 32CN1_05 32CN1_08 32CN
 ```
 
 Per house: `data/processed/stage2/<tile>/<house>/` holds `photo.tif` (512 × 512, 8 cm),
-`labels_relief.tif` and `labels_constant.tif` (band 1 facets, band 2 edge types, 255 = ignore),
-`facets.json` (pitch, azimuth, area, confidence per facet class), and the teacher, registration
+`labels_relief.tif` and `labels_constant.tif` (band 1 facets, band 2 edge types, 255 = ignore:
+neighbours, low-confidence facets, untyped edges), `facets.json` (pitch, azimuth, area,
+confidence and whether it is ignored, per facet class), and the teacher, registration
 and quality records. `outputs/stage2/<tile>/manifest.csv` lists every candidate with its status.
 BAG ids are only in the untracked `houses_private.csv`.
