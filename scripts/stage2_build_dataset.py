@@ -71,7 +71,18 @@ def main() -> None:
     ap.add_argument("--min-area", type=float, default=70.0)
     ap.add_argument("--max-area", type=float, default=300.0)
     ap.add_argument("--limit", type=int, help="process only the first N candidates (for trial runs)")
+    ap.add_argument(
+        "--photos-only",
+        nargs=4,
+        type=float,
+        metavar=("XMIN", "YMIN", "XMAX", "YMAX"),
+        help="only download the photo chips for houses in this sub-tile core (no LAZ needed yet)",
+    )
+    ap.add_argument("--overlap", type=float, default=25.0, help="with --photos-only: the sub-tile overlap, m")
     args = ap.parse_args()
+    if args.photos_only:
+        prefetch(args)
+        return
 
     tile_name = args.tile.stem
     proc = ROOT / "data" / "processed" / "stage2" / tile_name
@@ -117,9 +128,46 @@ def main() -> None:
     print(json.dumps(summary, indent=2))
 
 
-def process_house(hid, cand, pts, all_polys, tile_name, house_dir: Path, out: Path, args) -> tuple[dict, dict | None]:
+def prefetch(args) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    core = tuple(args.photos_only)
+    o = args.overlap
+    bounds = (core[0] - o, core[1] - o, core[2] + o, core[3] + o)
+    feats = bag_buildings(bounds, ROOT / "data" / "raw" / "bag" / f"{args.tile.stem}.json")
+    cands = find_candidates(feats, bounds, args.min_area, args.max_area, args.min_gap, core)[: args.limit]
+    print(f"{args.tile.stem}: {len(cands)} candidates; fetching 2 photo renderings each")
+    with ThreadPoolExecutor(4) as pool:  # a few parallel requests; PDOK is a shared public service
+        list(pool.map(lambda c: fetch_chip_photos(c, args), cands))
+    print(f"{args.tile.stem}: done")
+
+
+def chip_for(cand, args):
+    """Chip grid, its box, and the two photo paths. Photos are keyed by the chip's grid position,
+    not by house number, so a cached photo always belongs to the place it shows."""
+    from shapely.geometry import box
+
+    c = cand.footprint.centroid
+    chip_t, n = chip_grid((c.x, c.y), args.chip_m, args.res)
+    chip_box = box(chip_t.c, chip_t.f - n * args.res, chip_t.c + n * args.res, chip_t.f)
+    key = f"{round(chip_t.c / args.res)}_{round(chip_t.f / args.res)}_{n}"
+    folder = ROOT / "data" / "raw" / args.layer / "chips"
+    return chip_t, n, chip_box, folder / f"{key}.tif", folder / f"{key}_b.tif"
+
+
+def fetch_chip_photos(cand, args) -> None:
+    """Both renderings of a house's chip (the second offset by 7 x 5 px; see process_house)."""
     from shapely.affinity import translate
-    from shapely.geometry import box, shape
+
+    _, _, chip_box, path_a, path_b = chip_for(cand, args)
+    if not path_a.exists():
+        fetch_ortho(args.layer, chip_box.bounds, args.res, path_a)
+    if not path_b.exists():
+        fetch_ortho(args.layer, translate(chip_box, 7 * args.res, 5 * args.res).bounds, args.res, path_b)
+
+
+def process_house(hid, cand, pts, all_polys, tile_name, house_dir: Path, out: Path, args) -> tuple[dict, dict | None]:
+    from shapely.geometry import shape
 
     house_dir.mkdir(parents=True, exist_ok=True)
     row = {"house_id": hid, "status": "", "failed": [], "footprint_m2": round(cand.footprint.area, 1)}
@@ -141,15 +189,11 @@ def process_house(hid, cand, pts, all_polys, tile_name, house_dir: Path, out: Pa
 
     # 2. Photo chip: the house must fit with 6 m around it (room for the shift search).
     house = labels_from_report(t.report, cand.footprint)
-    c = cand.footprint.centroid
-    chip_t, n = chip_grid((c.x, c.y), args.chip_m, args.res)
-    chip_box = box(chip_t.c, chip_t.f - n * args.res, chip_t.c + n * args.res, chip_t.f)
+    chip_t, n, chip_box, photo_path, path_b = chip_for(cand, args)
     if not chip_box.contains(cand.footprint.buffer(6.0)):
         row |= {"status": "too large for chip", "failed": ["chip_size"]}
         return row, None
-    photo_path = ROOT / "data" / "raw" / args.layer / "stage2" / f"{hid}.tif"
-    if not photo_path.exists():
-        fetch_ortho(args.layer, chip_box.bounds, args.res, photo_path)
+    fetch_chip_photos(cand, args)
     with rasterio.open(photo_path) as src:
         rgb, photo_t = src.read(), src.transform
     if not photo_t.almost_equals(chip_t) or rgb.shape[1:] != (n, n):
@@ -161,9 +205,6 @@ def process_house(hid, cand, pts, all_polys, tile_name, house_dir: Path, out: Pa
     #    rendering of the same pixels; the two fits' disagreement measures the registration's
     #    uncertainty, and their mean halves that noise for the labels.
     reg = register_house(house, rgb, photo_t, gz)
-    path_b = photo_path.with_name(f"{hid}_b.tif")
-    if not path_b.exists():
-        fetch_ortho(args.layer, translate(chip_box, 7 * args.res, 5 * args.res).bounds, args.res, path_b)
     with rasterio.open(path_b) as src:
         reg_b = register_house(house, src.read(), src.transform, gz)
 
