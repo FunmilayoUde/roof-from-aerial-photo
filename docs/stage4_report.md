@@ -121,10 +121,29 @@ Median |error|, model vs baseline:
 - **The truth is the LiDAR pipeline,** not a measured roof. On houses where it is uncertain, a
   "loss" may be the truth's error.
 
+## Calibration: tried, not adopted
+
+The model underestimates (median bias −6.3%). One factor per fold, c = median(LiDAR area /
+model area) over that fold's validation houses (30, 24, 24), was applied to its test houses
+(`model_pitch_cal_m2` in `cv_summary.json`). Neither the model nor c saw the test houses.
+
+| median \|error\| | uncalibrated | calibrated | baseline |
+|---|---|---|---|
+| all 351 | 9.4% | 9.1% | 11.5% |
+| difference from baseline | −2.1 (−3.9 to +0.1) | −2.4 (−4.0 to −0.4), p = 0.004 | |
+| clean 159 | 7.1% | 9.9% | 13.5% |
+| west / centre / east | 9.5 / 8.9 / 9.5% | 7.3 / 12.1 / 9.2% | 12.3 / 11.7 / 8.9% |
+
+The factors (×1.10, ×1.12, ×1.10) are larger than the test underestimate, and the bias flips to
++3.8%. Each rests on 24–30 houses from a single sub-tile, and sub-tile 13 serves two folds. The
+overall result improves, but at the cost of the reliable-truth houses and the centre fold, so it
+is not adopted. A sounder factor needs more held-out houses: for example, out-of-fold predictions
+on the training houses, which a multi-seed or inner cross-validation run provides.
+
 ## Next
 
-1. Cheap, likely gains: calibrate the area on validation houses; 3 seeds per fold to measure the
-   training noise.
+1. 3 seeds per fold to measure the training noise, averaging their predictions; then calibrate
+   on out-of-fold predictions for the training houses, rather than on one validation sub-tile.
 2. Orientation: weight its loss up, or train it separately from roof extent, and check whether
    the 8-way classes are too fine for 8 cm photos.
 3. Stage 5 (edge types, then pitch per facet), which needs better orientation first.

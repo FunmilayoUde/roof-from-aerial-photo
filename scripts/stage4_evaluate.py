@@ -15,7 +15,8 @@ Per test house:
                        test houses use the predicted one. (Uses the footprint: photo + footprint.)
            compared with the LiDAR roof area, next to baseline B1 (footprint x k, k fitted on the
            same training houses).
-Writes outputs/stage4/<run>/eval.json, per_house.csv and previews/.
+Writes outputs/stage4/<run>/eval.json, per_house.csv and previews/. With --on val it scores the
+validation sub-tile instead (eval_val.json, per_house_val.csv, no previews), for calibration.
 """
 
 from __future__ import annotations
@@ -94,6 +95,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--run", required=True)
     ap.add_argument("--previews", type=int, default=8)
+    ap.add_argument("--on", choices=["test", "val"], default="test", help="which held-out houses to score")
     args = ap.parse_args()
     run = ROOT / "outputs" / "stage4" / args.run
     split = json.loads((run / "split.json").read_text())
@@ -114,7 +116,10 @@ def main() -> None:
 
     rows, inter, union, correct, labelled = [], 0, 0, 0, 0
     (run / "previews").mkdir(exist_ok=True)
-    for tile in split["test"]:
+    suffix = "" if args.on == "test" else "_val"
+    if args.on == "val":
+        args.previews = 0
+    for tile in split[args.on]:
         fps, man = footprints(tile), manifest(tile)
         for chip in kept_chips(ROOT, [tile]):
             image, orient, pitch_t, roof_t = load_targets(chip)
@@ -177,7 +182,7 @@ def main() -> None:
             if len(rows) <= args.previews:
                 preview(image, orient, cls, house, rows[-1], run / "previews" / f"{chip.house_id}.png")
 
-    with (run / "per_house.csv").open("w", newline="") as fh:
+    with (run / f"per_house{suffix}.csv").open("w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0]))
         w.writeheader()
         w.writerows(rows)
@@ -187,7 +192,8 @@ def main() -> None:
     methods = ["model_pitch_m2", "model_fallback_m2", "hybrid_m2", "b1_m2", "plan_m2"]
     result = {
         "run": args.run,
-        "test": split["test"],
+        "scored": split[args.on],
+        "on": args.on,
         "houses": len(rows),
         "b1_factor": round(b1.k_all, 3),
         "fallback_pitch_deg": round(fallback_pitch, 1),
@@ -229,7 +235,7 @@ def main() -> None:
         }
     result["error_analysis"] = {"model_variant": best, "by": analysis}
     result["model_beats_b1_houses"] = int((err_m < err_b).sum())
-    (run / "eval.json").write_text(json.dumps(result, indent=2))
+    (run / f"eval{suffix}.json").write_text(json.dumps(result, indent=2))
     print(json.dumps(result, indent=2))
 
 
