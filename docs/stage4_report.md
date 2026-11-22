@@ -3,13 +3,15 @@
 **Question.** Can a model that sees only the aerial photo measure roof area better than the
 footprint baseline from Stage 3?
 
-**Answer.** Yes, modestly, and clearly where the LiDAR truth is reliable. In a 3-fold spatial
-cross-validation over all 351 Bilthoven houses, each predicted by a model that never saw its
-area, the photo model's median roof-area error is **9.4%**, against 11.5% for footprint × 1.45.
-The difference (−2.1 points, 95% interval −3.9 to +0.1) is only just distinguishable from zero.
-On the 159 houses whose LiDAR truth is most reliable, it is **7.1% vs 13.5%** (interval −8.9 to
-−2.1, sign test p = 0.002). Its biggest advantage is on flat roofs (9.7% vs 34.9%). It loses in
-one area (the east), underestimates area by about 6%, and orientation is weak.
+**Answer.** Yes. In a 3-fold spatial cross-validation over all 351 Bilthoven houses, each
+predicted by models that never saw its area, the final model (3 training seeds averaged, area
+calibrated on the other folds' houses) has a median roof-area error of **8.9%**, against 11.5%
+for footprint × 1.45. The difference is −2.5 points (95% interval −4.1 to −0.3), and the model is
+closer on 204 of 351 houses (sign test p = 0.001). Its 90th-percentile error is 21.8% against
+27.7%. It beats the baseline in all three areas, narrowly in the east (8.6% vs 8.9%). On the 159
+houses whose LiDAR truth is most reliable, it is **8.2% vs 13.5%** (7.4% uncalibrated). Its
+biggest advantage is flat roofs (10.4% vs 34.9%); it is worse on small roofs and orientation is
+weak.
 
 ## Setup
 
@@ -58,7 +60,10 @@ the model nothing about it, so it learned to leave such roof out. Adding a roof-
 the labels (every facet of the house, `labels_*.tif` band 3) and a roof output to the model fixed
 this: roof IoU went from 0.79 to 0.84, and the east-split error from 11.1% to 7.7%.
 
-## Results (3-fold cross-validation, 351 houses)
+## Results: single model, seed 0 (3-fold cross-validation, 351 houses)
+
+These are the first full cross-validation results, one model per fold, uncalibrated. The final
+results, with 3 seeds and calibration, are further down.
 
 | | photo model | fallback pitch | hybrid | **baseline B1** |
 |---|---|---|---|---|
@@ -83,7 +88,7 @@ there the model doesn't beat it.
 **Pixel quality** per fold: roof IoU 0.82–0.84. Predicted pitch is off by a median of 8.4–8.6°
 per house. Orientation accuracy is only 18–39%.
 
-## Where it wins and loses
+## Where it wins and loses (seed 0, uncalibrated)
 
 Median |error|, model vs baseline:
 
@@ -110,18 +115,17 @@ Median |error|, model vs baseline:
 
 ## Caveats
 
-- **Run-to-run variation is about the size of the overall gain.** A single earlier run on the
-  east (with sub-tile 05 in training rather than in test) scored 7.7%; this fold scored 9.5% on
-  the same 62 houses plus 05's 14. Training randomness (seed, which epoch is kept) moves results
-  by about 2 points. Repeating each fold with a few seeds would tighten the overall comparison.
-- **The model underestimates** (median bias −6.3%). Calibrating the area by a factor fitted on
-  the validation houses would remove most of it, and probably lower the error.
+- **Seed noise is 0.5–1 point per fold** (pooled 9.4–10.0%), smaller than the gain over the
+  baseline. An earlier, larger difference (7.7% vs 9.5% on the east) came from a different
+  training set (sub-tile 05 in training), not from the seed alone.
+- **Calibration depends on the folds agreeing.** The three factors (1.05–1.08) are close, but a
+  new area or photo year would need its own check.
 - **Orientation is poor** (18–39% of roof pixels). It barely affects area, which depends on roof
   extent and pitch, but it matters for facets and edge types in Stage 5.
 - **The truth is the LiDAR pipeline,** not a measured roof. On houses where it is uncertain, a
   "loss" may be the truth's error.
 
-## Calibration: tried, not adopted
+## Calibration from one validation sub-tile: tried, not adopted
 
 The model underestimates (median bias −6.3%). One factor per fold, c = median(LiDAR area /
 model area) over that fold's validation houses (30, 24, 24), was applied to its test houses
@@ -137,13 +141,57 @@ model area) over that fold's validation houses (30, 24, 24), was applied to its 
 The factors (×1.10, ×1.12, ×1.10) are larger than the test underestimate, and the bias flips to
 +3.8%. Each rests on 24–30 houses from a single sub-tile, and sub-tile 13 serves two folds. The
 overall result improves, but at the cost of the reliable-truth houses and the centre fold, so it
-is not adopted. A sounder factor needs more held-out houses: for example, out-of-fold predictions
-on the training houses, which a multi-seed or inner cross-validation run provides.
+is not adopted. The cross-fold calibration below uses ten times as many houses and replaces it.
+
+## Final: 3 seeds and cross-fold calibration
+
+**Seeds.** Each fold was trained three times (seeds 0, 1, 2), and each house's predicted area is
+the mean of its fold's three models. Pooled over all houses, the individual seeds score 9.4%,
+9.8% and 10.0%; within a fold they spread 0.5–1.0 points (west 9.5/9.7/10.2, centre 8.9/9.5/9.9,
+east 9.5/10.4/10.2). Seed 0 was the luckiest of the three.
+
+**Cross-fold calibration.** Fold F's area factor is the median of LiDAR area / model area over
+the *other two folds'* test houses (210–275 houses), each predicted by models that never saw it.
+None of them is in F's test set, so F's houses are never used to correct themselves. The factors
+are ×1.05, ×1.08 and ×1.05 (west, centre, east), in line with the model's underestimate.
+
+| | ensemble + calibration | ensemble | baseline B1 |
+|---|---|---|---|
+| **all 351**: median \|error\| | **8.9%** | 9.2% | 11.5% |
+| 90th percentile | **21.8%** | 21.9% | 27.7% |
+| within 10% | 53% | 54% | 47% |
+| bias (median signed) | +0.4% | −5.5% | +0.3% |
+| difference from baseline | **−2.5 (−4.1 to −0.3)** | −2.3 (−4.2 to +0.1) | |
+| houses closer than baseline | **204 / 351, p = 0.001** | 186 / 351, p = 0.14 | |
+| **clean 159**: median \|error\| | 8.2% | **7.4%** | 13.5% |
+| difference from baseline | −5.3 (−7.3 to −1.5) | −6.1 (−8.4 to −2.3) | |
+| **west / centre / east** | **8.6 / 10.5 / 8.6%** | 9.4 / 8.6 / 10.3% | 12.3 / 11.7 / 8.9% |
+
+Calibration removes the underestimate (bias −5.5% to +0.4%) and makes the model beat the baseline
+in every area. It costs a little on the clean houses, which the model underestimated less than
+average, so one shared factor pushes them slightly high.
+
+**Where the final model wins and loses** (median |error|, model vs baseline):
+
+| | houses | model | baseline |
+|---|---|---|---|
+| mostly flat roof (> 50% flat) | 22 | **10.4%** | 34.9% |
+| some flat (5–50%) | 129 | 9.2% | 9.5% |
+| no flat (< 5%) | 200 | **8.5%** | 11.5% |
+| uncertain facets ≤ 10% | 159 | **8.2%** | 13.5% |
+| uncertain 10–30% | 108 | 10.8% | 9.5% |
+| uncertain 30–50% | 84 | **8.2%** | 11.2% |
+| unlabelled points < 2% | 225 | **9.0%** | 11.5% |
+| unlabelled points 2–5% (trees) | 126 | **8.5%** | 11.4% |
+| roof under 150 m² | 20 | 15.3% | 11.6% |
+| 150–250 m² | 199 | **8.0%** | 11.7% |
+| over 250 m² | 132 | **10.0%** | 11.0% |
+
+Averaging seeds closed the gap on trees (now a win). Small roofs remain the clear weak spot.
 
 ## Next
 
-1. 3 seeds per fold to measure the training noise, averaging their predictions; then calibrate
-   on out-of-fold predictions for the training houses, rather than on one validation sub-tile.
+1. Done: 3 seeds per fold and cross-fold calibration (see Final).
 2. Orientation: weight its loss up, or train it separately from roof extent, and check whether
    the 8-way classes are too fine for 8 cm photos.
 3. Stage 5 (edge types, then pitch per facet), which needs better orientation first.
@@ -157,6 +205,9 @@ uv run python scripts/stage4_evaluate.py --run cv_west
 # same for cv_centre (--test 32CN1_04 32CN1_09 --val 32CN1_13)
 # and cv_east (--test 32CN1_05 32CN1_10 32CN1_15 32CN1_20 --val 32CN1_13)
 uv run python scripts/stage4_cv_summary.py cv_west cv_centre cv_east
+# final: seeds 1 and 2 with --seed, runs named cv_<fold>_s1 / _s2, each also scored with --on val
+uv run python scripts/stage4_cv_summary.py cv_west,cv_west_s1,cv_west_s2 \
+    cv_centre,cv_centre_s1,cv_centre_s2 cv_east,cv_east_s1,cv_east_s2
 ```
 
 Each fold takes 40–60 minutes on an M4 under `caffeinate`, with about 6 GB of memory free. The
