@@ -38,9 +38,9 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument(
         "--aug",
-        choices=["geom", "colour", "none"],
+        choices=["geom", "colour", "none", "mixed"],
         default="geom",
-        help="geom: 90° rotations/flips; colour: jitter only",
+        help="geom: 90° rotations/flips; colour: jitter only; mixed: see dataset.ChipDataset",
     )
     args = ap.parse_args()
 
