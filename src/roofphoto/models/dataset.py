@@ -133,15 +133,30 @@ def colour_jitter(image: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     return (image * gain + shift).astype(np.float32)
 
 
+def rotate_without_orientation(image, orient, pitch, roof, rng):
+    """A random non-identity rotation/flip; roof pixels' orientation becomes ignore, background stays 0."""
+    while True:
+        k, lr, ud = int(rng.integers(4)), bool(rng.integers(2)), bool(rng.integers(2))
+        if (k, lr, ud) != (0, False, False):
+            break
+    image, orient, (pitch, roof) = augment(image, orient, [pitch, roof], k, lr, ud)
+    orient = np.where((orient >= 1) & (orient != IGNORE), IGNORE, orient).astype(orient.dtype)
+    return image, orient, pitch, roof
+
+
 class ChipDataset:
     """A torch-style dataset (len, getitem) over kept chips.
 
     aug (training only): "geom" rotates and flips by multiples of 90° with the orientation classes
-    remapped (Stage 4); "colour" only jitters colour, keeping the sun's direction; "none".
+    remapped (Stage 4); "colour" only jitters colour, keeping the sun's direction; "none";
+    "mixed": colour jitter always, and on half the images a random rotation or flip with the
+    orientation of roof pixels set to ignore. Roof extent and pitch don't depend on where the
+    light comes from, so they learn from every image; orientation does (sun-shading is its
+    strongest cue), so it learns only from images in their true position (Stage 5).
     """
 
     def __init__(self, chips: list[Chip], train: bool, seed: int = 0, aug: str = "geom"):
-        if aug not in ("geom", "colour", "none"):
+        if aug not in ("geom", "colour", "none", "mixed"):
             raise ValueError(f"unknown augmentation {aug!r}")
         self.chips = chips
         self.train = train
@@ -156,8 +171,10 @@ class ChipDataset:
         import torch
 
         image, orient, pitch, roof = self.cache[i]
-        if self.train and self.aug == "colour":
+        if self.train and self.aug in ("colour", "mixed"):
             image = colour_jitter(image, self.rng)
+        if self.train and self.aug == "mixed" and self.rng.random() < 0.5:
+            image, orient, pitch, roof = rotate_without_orientation(image, orient, pitch, roof, self.rng)
         if self.train and self.aug == "geom":
             image, orient, (pitch, roof) = augment(
                 image,

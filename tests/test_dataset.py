@@ -49,3 +49,19 @@ def test_colour_jitter_keeps_shading_order():
     for _ in range(50):
         out = colour_jitter(img, rng)
         assert (out[:, :, 2:].mean(axis=(1, 2)) > out[:, :, :2].mean(axis=(1, 2))).all()
+
+
+def test_rotated_samples_keep_roof_and_background_but_not_orientation():
+    from roofphoto.models.dataset import rotate_without_orientation
+
+    rng = np.random.default_rng(1)
+    orient = np.zeros((8, 8), dtype=np.uint8)
+    orient[2:6, 2:6] = 4  # a north-east-facing roof
+    orient[0, 0] = IGNORE  # a neighbour
+    roof = (orient == 4).astype(np.uint8)
+    pitch = np.where(orient == 4, 30.0, np.nan).astype(np.float32)
+    for _ in range(20):
+        _, o, p, r = rotate_without_orientation(np.zeros((3, 8, 8), np.float32), orient, pitch, roof, rng)
+        assert set(np.unique(o)) <= {0, IGNORE}  # no orientation class survives a rotation
+        assert (o == 0).sum() == (orient == 0).sum()  # background stays labelled (no all-ignore batches)
+        assert r.sum() == roof.sum() and np.nansum(p) == np.nansum(pitch)  # roof and pitch kept
