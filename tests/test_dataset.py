@@ -65,3 +65,20 @@ def test_rotated_samples_keep_roof_and_background_but_not_orientation():
         assert set(np.unique(o)) <= {0, IGNORE}  # no orientation class survives a rotation
         assert (o == 0).sum() == (orient == 0).sum()  # background stays labelled (no all-ignore batches)
         assert r.sum() == roof.sum() and np.nansum(p) == np.nansum(pitch)  # roof and pitch kept
+
+
+def test_orientation_loss_ignores_background_and_counts_roof_pixels():
+    import torch
+
+    from roofphoto.models import unet
+
+    orient = torch.zeros((1, 4, 4), dtype=torch.long)
+    orient[0, :2, :2] = 3  # four roof pixels facing NE
+    out = torch.zeros((1, 12, 4, 4))
+    out[0, 3, :2, :2] = 10.0  # confident and right on the roof
+    out[0, 5, 2:, :] = 10.0  # confident nonsense on background: must not count
+    roof = (orient > 0).long()
+    pitch = torch.full((1, 4, 4), float("nan"))
+    loss = unet.loss(out, orient, pitch, roof)
+    assert float(loss["orientation"]) < 1e-3
+    assert unet.roof_orientation_hits(out, orient) == (4, 4)

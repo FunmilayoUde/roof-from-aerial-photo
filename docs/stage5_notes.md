@@ -1,0 +1,52 @@
+# Stage 5 notes (in progress): orientation
+
+Stage 5 adds edge types and per-facet pitch, both of which depend on knowing which way each roof
+surface faces. The Stage 4 models get orientation (flat, or sloped towards one of 8 compass
+directions) right on only 18–39% of labelled roof pixels, so orientation comes first.
+
+## Diagnosis (no training): `scripts/stage5_orientation_diagnosis.py`
+
+On the Stage 4 seed-0 models, per fold:
+
+- **Weak on training houses too** (33–58%), not just on held-out areas: a learning or setup
+  problem, not only generalisation.
+- **Flat vs sloped is mostly right** (83–97%). Most errors are a neighbouring direction; opposite
+  directions are rare.
+- **Lopsided across directions**: north, south-west and north-west are recognised far better than
+  east, west and south, although rotation augmentation shows every roof facing every way.
+- 32% of sloped roof area lies within 5° of an octant boundary (22% if uniform), which adds some
+  unavoidable near-misses.
+
+## A hypothesis, then a correction
+
+**Hypothesis:** the sun. Slopes facing away from it are dark, slopes facing it bright, and
+rotating a training image keeps the shading but changes the label, so rotation augmentation
+would scramble the strongest orientation cue.
+
+**Test 1** (west fold, seed 0): colour-only augmentation raised orientation accuracy from 33% to
+82% on training houses and from 32% to 49% on test, but cost roof extent (IoU 0.844 → 0.797) and
+area (9.5% → 10.7% median error).
+
+**Test 2** (west, seed 0): "mixed" augmentation (rotations on half the images, with roof
+orientation ignored on those) did worse on orientation than both: 31% train, 20% test.
+
+**Correction.** The two other Stage 4 rotation models of the west fold (seeds 1 and 2) reach
+**54% and 49%** on test, against 32% for seed 0. The seed alone moves orientation accuracy by
+about 20 points, so single runs can't tell these augmentation schemes apart. The sun-shading
+hypothesis is **not established**: colour-only's 49% is inside the rotation runs' own range. The
+error pattern also changes with the seed. Seed 0 is mostly one step off; seeds 1 and 2 are mostly
+exactly 90° or 180° off, which suggests the model reads roof shape but confuses symmetric sides.
+
+## Why orientation is unstable, and the change
+
+1. The orientation loss was computed over the whole image, where about 85% of pixels are
+   background: easy, and already handled by the roof output. The signal for roof pixels was weak.
+2. The kept checkpoint was chosen by total validation loss, which barely reflected roof-pixel
+   orientation, so which orientation quality a run ended up with was partly luck.
+
+**Change** (`roofphoto.models.unet`): orientation loss over labelled roof pixels only, among the
+9 roof classes; validation logs roof-pixel orientation accuracy; with orientation now a real part
+of the validation loss, checkpoint selection takes it into account.
+
+**Next test:** with the new loss, rotations vs colour-only augmentation, 3 seeds each, on the
+west fold (runs `s5_west_geom_s{0,1,2}` and `s5_west_colour_s{0,1,2}`).

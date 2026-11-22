@@ -78,14 +78,18 @@ def main() -> None:
         model.eval()
         va = []
         with torch.no_grad():
+            hits = [0, 0]
             for img, orient, pitch, roof in val_dl:
                 img, orient, pitch, roof = img.to(device), orient.to(device), pitch.to(device), roof.to(device)
-                va.append(
-                    {k: float(v) for k, v in unet.loss(model(img), orient, pitch, roof, args.pitch_weight).items()}
-                )
+                out_v = model(img)
+                va.append({k: float(v) for k, v in unet.loss(out_v, orient, pitch, roof, args.pitch_weight).items()})
+                c, n = unet.roof_orientation_hits(out_v, orient)
+                hits[0] += c
+                hits[1] += n
         row = {"epoch": epoch, "seconds": round(time.time() - t0, 1)}
         row |= {f"train_{k}": round(float(np.mean([x[k] for x in tr])), 4) for k in tr[0]}
         row |= {f"val_{k}": round(float(np.mean([x[k] for x in va])), 4) for k in va[0]}
+        row["val_roof_orientation_acc"] = round(hits[0] / max(hits[1], 1), 4)
         history.append(row)
         if row["val_total"] < best:
             best = row["val_total"]
