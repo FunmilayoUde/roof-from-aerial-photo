@@ -36,3 +36,16 @@ def test_every_rotation_and_flip_remaps_orientation_like_the_roof(az):
         expected = 2 + downhill_octant(img[0])
         assert set(np.unique(o)) == {expected, IGNORE}, (az, k, lr, ud)
         np.testing.assert_allclose(h, img[0], atol=1e-5)  # pitch moves with the image
+
+
+def test_colour_jitter_keeps_shading_order():
+    """Colour jitter must not reverse which slope is brighter (the sun-shading cue)."""
+    from roofphoto.models.dataset import colour_jitter
+
+    rng = np.random.default_rng(0)
+    img = np.zeros((3, 4, 4), dtype=np.float32)
+    img[:, :, :2] = -1.0  # a dark (north-facing) slope
+    img[:, :, 2:] = 1.0  # a bright (south-facing) slope
+    for _ in range(50):
+        out = colour_jitter(img, rng)
+        assert (out[:, :, 2:].mean(axis=(1, 2)) > out[:, :, :2].mean(axis=(1, 2))).all()

@@ -124,12 +124,28 @@ def load_targets(chip: Chip) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.nda
     return image, orient, pitch, roof
 
 
-class ChipDataset:
-    """A torch-style dataset (len, getitem) over kept chips; augments when train=True."""
+def colour_jitter(image: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """Brightness/contrast and a small per-channel shift, on the normalised image. Unlike rotating
+    or flipping, it leaves the direction the light comes from, and so the sun-shading of slopes,
+    unchanged."""
+    gain = rng.uniform(0.85, 1.15)
+    shift = rng.uniform(-0.1, 0.1, size=(image.shape[0], 1, 1)).astype(np.float32)
+    return (image * gain + shift).astype(np.float32)
 
-    def __init__(self, chips: list[Chip], train: bool, seed: int = 0):
+
+class ChipDataset:
+    """A torch-style dataset (len, getitem) over kept chips.
+
+    aug (training only): "geom" rotates and flips by multiples of 90° with the orientation classes
+    remapped (Stage 4); "colour" only jitters colour, keeping the sun's direction; "none".
+    """
+
+    def __init__(self, chips: list[Chip], train: bool, seed: int = 0, aug: str = "geom"):
+        if aug not in ("geom", "colour", "none"):
+            raise ValueError(f"unknown augmentation {aug!r}")
         self.chips = chips
         self.train = train
+        self.aug = aug
         self.rng = np.random.default_rng(seed)
         self.cache = [load_targets(c) for c in chips]  # 354 chips x ~4 MB: fits in memory
 
@@ -140,7 +156,9 @@ class ChipDataset:
         import torch
 
         image, orient, pitch, roof = self.cache[i]
-        if self.train:
+        if self.train and self.aug == "colour":
+            image = colour_jitter(image, self.rng)
+        if self.train and self.aug == "geom":
             image, orient, (pitch, roof) = augment(
                 image,
                 orient,

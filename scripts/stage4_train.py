@@ -36,6 +36,12 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--pitch-weight", type=float, default=1.0)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument(
+        "--aug",
+        choices=["geom", "colour", "none"],
+        default="geom",
+        help="geom: 90° rotations/flips; colour: jitter only",
+    )
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
@@ -44,7 +50,7 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     train_tiles = [t for t in TILES if t not in args.test + args.val]
     split = {"train": train_tiles, "val": args.val, "test": args.test}
-    train = ChipDataset(kept_chips(ROOT, train_tiles), train=True, seed=args.seed)
+    train = ChipDataset(kept_chips(ROOT, train_tiles), train=True, seed=args.seed, aug=args.aug)
     val = ChipDataset(kept_chips(ROOT, args.val), train=False)
     split |= {"n_train": len(train), "n_val": len(val)}
     (out / "split.json").write_text(json.dumps(split | {"args": vars(args)}, indent=2))
