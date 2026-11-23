@@ -147,7 +147,8 @@ def main() -> None:
                 }
             )
             print(
-                f"  {chip.house_id}: LiDAR {rows[-1]['truth_m2']}, model {rows[-1]['model_cal_m2']}, B1 {rows[-1]['b1_m2']}"
+                f"  {chip.house_id}: LiDAR {rows[-1]['truth_m2']}, "
+                f"model {rows[-1]['model_cal_m2']}, B1 {rows[-1]['b1_m2']}"
             )
 
     with (out / "per_house.csv").open("w", newline="") as fh:
