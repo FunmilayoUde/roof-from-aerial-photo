@@ -70,3 +70,23 @@ colour-only kept epoch 15, when orientation started to overfit and roof was stil
 **Next:** weight orientation at about 0.25, and choose checkpoints by that same weighted total;
 repeat the 3-seed comparison. Fallback if that can't keep both: separate models for roof/pitch
 and for orientation.
+
+## Weighted orientation loss (0.25), west fold, 3 seeds each
+
+| mean of 3 seeds (range) | Stage 4 | weighted, rotations | weighted, colour only |
+|---|---|---|---|
+| orientation, test | 45% (32–54%) | **64% (61–67%)** | 60% (58–62%) |
+| roof IoU | **0.84** | 0.80 | 0.75 |
+| median area error | **9.8%** | 11.8% (11.0–13.2%) | 14.7% |
+| 90th percentile area error | **21.1%** | 26.7% | 35.0% |
+| pitch error, median per house | **8.5°** | 9.9° | 10.4° |
+
+- **Rotations beat colour-only on every measure, orientation included.** The sun-shading
+  hypothesis is ruled out; the earlier colour-only advantage was seed noise and the loss setup.
+- Weighting gives much better and stable orientation, but one shared network still trades it
+  against roof extent, area (+2 points) and pitch (+1.4°).
+
+**Decision proposed:** two models. Area, roof extent and pitch from the Stage 4 models (unchanged,
+8.9% median area error); orientation from separate models trained with the weighted loss and
+rotations, used inside the Stage 4 roof mask. Remaining work: orientation models for the centre
+and east folds (3 seeds each).
