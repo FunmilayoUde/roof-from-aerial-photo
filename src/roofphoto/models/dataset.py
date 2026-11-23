@@ -144,10 +144,14 @@ def rotate_without_orientation(image, orient, pitch, roof, rng):
     return image, orient, pitch, roof
 
 
-def load_edges(chip: Chip) -> np.ndarray:
-    """Edge-type band of the chip's labels: 0 none, EDGE_CLASSES values, 255 ignore."""
+def load_edges(chip: Chip, binary: bool = False) -> np.ndarray:
+    """Edge-type band of the chip's labels: 0 none, EDGE_CLASSES values, 255 ignore.
+    binary=True: 1 for any edge type (where edges are, not which kind), 0 none, 255 ignore."""
     with rasterio.open(chip.folder / f"labels_{chip.labels}.tif") as src:
-        return src.read(2)
+        e = src.read(2)
+    if binary:
+        e = np.where(e == IGNORE, IGNORE, (e > 0).astype(np.uint8)).astype(np.uint8)
+    return e
 
 
 class ChipDataset:
@@ -161,7 +165,15 @@ class ChipDataset:
     strongest cue), so it learns only from images in their true position (Stage 5).
     """
 
-    def __init__(self, chips: list[Chip], train: bool, seed: int = 0, aug: str = "geom", edges: bool = False):
+    def __init__(
+        self,
+        chips: list[Chip],
+        train: bool,
+        seed: int = 0,
+        aug: str = "geom",
+        edges: bool = False,
+        edge_binary: bool = False,
+    ):
         if aug not in ("geom", "colour", "none", "mixed"):
             raise ValueError(f"unknown augmentation {aug!r}")
         if edges and aug == "mixed":
@@ -172,7 +184,7 @@ class ChipDataset:
         self.edges = edges
         self.rng = np.random.default_rng(seed)
         self.cache = [load_targets(c) for c in chips]  # 354 chips x ~4 MB: fits in memory
-        self.edge_cache = [load_edges(c) for c in chips] if edges else None
+        self.edge_cache = [load_edges(c, binary=edge_binary) for c in chips] if edges else None
 
     def __len__(self) -> int:
         return len(self.chips)

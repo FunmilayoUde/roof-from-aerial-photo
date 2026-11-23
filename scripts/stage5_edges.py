@@ -30,7 +30,7 @@ import numpy as np  # noqa: E402
 import rasterio  # noqa: E402
 import torch  # noqa: E402
 from rasterio.features import rasterize  # noqa: E402
-from scipy.ndimage import binary_dilation, label  # noqa: E402
+from scipy.ndimage import binary_dilation, distance_transform_edt, label  # noqa: E402
 
 from roofphoto.data.chips import EDGE_CLASSES  # noqa: E402
 from roofphoto.data.lookup import footprints  # noqa: E402
@@ -47,6 +47,8 @@ FOLDS = {
 }
 # Learned edge output (Stage 5): scored as "model_edge" for folds that have these runs.
 EDGE_RUNS = {fold: [f"s5e_{fold}_s{s}" for s in range(3)] for fold in FOLDS}
+# Learned edge locations, typed by the rules (Stage 5): scored as "model_edge_bin".
+EDGE_BIN_RUNS = {fold: [f"s5b_{fold}_s{s}" for s in range(3)] for fold in FOLDS}
 TOL_PX = 3.0
 MIN_FACET_PX = 150  # ~1 m² at 8 cm
 
@@ -82,7 +84,7 @@ def main() -> None:
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     out_dir = ROOT / "outputs/stage5"
     (out_dir / "edge_previews").mkdir(parents=True, exist_ok=True)
-    result, pooled = {}, {"model": {}, "model_reg": {}, "model_edge": {}, "oracle": {}}
+    result, pooled = {}, {"model": {}, "model_reg": {}, "model_edge": {}, "model_edge_bin": {}, "oracle": {}}
 
     for fold, (roof_runs, orient_runs) in ((f, FOLDS[f]) for f in args.folds):
         split = json.loads((ROOT / "outputs/stage4" / roof_runs[0] / "split.json").read_text())
@@ -90,8 +92,10 @@ def main() -> None:
         orient_models = [load(r, device) for r in orient_runs]
         edge_runs = [r for r in EDGE_RUNS[fold] if (ROOT / "outputs/stage4" / r / "model.pt").exists()]
         edge_models = [load(r, device, edges=True) for r in edge_runs]
-        print(f"{fold}: edge models {edge_runs or 'none'}")
-        counts = {"model": {}, "model_reg": {}, "model_edge": {}, "oracle": {}}
+        bin_runs = [r for r in EDGE_BIN_RUNS[fold] if (ROOT / "outputs/stage4" / r / "model.pt").exists()]
+        bin_models = [load(r, device, edges=True) for r in bin_runs]
+        print(f"{fold}: edge models {edge_runs or 'none'}; edge-location models {bin_runs or 'none'}")
+        counts = {"model": {}, "model_reg": {}, "model_edge": {}, "model_edge_bin": {}, "oracle": {}}
         shown = 0
         for tile in split["test"]:
             fps = footprints(ROOT, tile)
@@ -131,6 +135,17 @@ def main() -> None:
                         )
                     edges_e = np.where(binary_dilation(house, iterations=4), ep.argmax(0), 0).astype(np.uint8)
                     add(counts["model_edge"], score_edges(edges_e, edges_t, ignore, TOL_PX))
+                if bin_models and edges_p.any():
+                    # Where: the models' mean edge probability > 0.5 near the predicted roof.
+                    # Which type: that of the nearest rule-based edge on the same house.
+                    with torch.no_grad():
+                        pe = np.mean(
+                            [torch.softmax(unet.edge_logits(m(x))[0, :2], 0)[1].cpu().numpy() for m in bin_models], 0
+                        )
+                    where = (pe > 0.5) & binary_dilation(house, iterations=4)
+                    _, (rr, cc) = distance_transform_edt(edges_p == 0, return_indices=True)
+                    edges_b = np.where(where, edges_p[rr, cc], 0).astype(np.uint8)
+                    add(counts["model_edge_bin"], score_edges(edges_b, edges_t, ignore, TOL_PX))
                 add(counts["oracle"], score_edges(edges_o, edges_t, ignore, TOL_PX))
                 if shown < args.previews:
                     preview(

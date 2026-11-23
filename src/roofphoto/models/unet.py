@@ -58,6 +58,7 @@ def loss(
     orient_weight: float = 1.0,
     edges: torch.Tensor | None = None,
     edge_weight: float = 0.0,
+    edge_binary: bool = False,
 ) -> dict:
     logits, pitch_pred, roof_logit = split(out)
     on_roof = (orient >= 1) & (orient != IGNORE)
@@ -77,7 +78,9 @@ def loss(
     result = {"orientation": ce, "pitch": pl, "roof": rl}
     el = edge_logits(out)
     if edges is not None and el is not None and edge_weight > 0:
-        w = torch.ones(N_EDGE, device=out.device)
+        if edge_binary:  # where edges are: the first two edge channels, edge vs none
+            el = el[:, :2]
+        w = torch.ones(el.shape[1], device=out.device)
         w[0] = NO_EDGE_WEIGHT
         ec = F.cross_entropy(el, edges, weight=w, ignore_index=IGNORE)
         total = total + edge_weight * ec
