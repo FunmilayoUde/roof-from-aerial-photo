@@ -93,30 +93,46 @@ def main() -> None:
     bounds = [round(i * size / args.parts) for i in range(args.parts + 1)]
     parts = [out.with_name(f"{out.name}.part{i:02d}") for i in range(args.parts)]
     t0 = time.time()
-    with ThreadPoolExecutor(args.workers) as pool:
-        futures = [pool.submit(fetch_range, url, p, bounds[i], bounds[i + 1] - 1) for i, p in enumerate(parts)]
-        while not all(f.done() for f in futures):
-            got = sum(p.stat().st_size for p in parts if p.exists())
-            rate = got / max(time.time() - t0, 1)
-            print(f"\r  {got / size:6.1%}  {got / 1e9:.2f} GB  {rate / 1e6:.1f} MB/s", end="", flush=True)
-            time.sleep(10)
-        for f in futures:
-            f.result()  # re-raise any failure
-    print()
+    joining = parts[0].exists() and parts[0].stat().st_size > bounds[1] - bounds[0]
+    if joining:
+        print("an earlier join was interrupted; finishing it")
+    else:
+        with ThreadPoolExecutor(args.workers) as pool:
+            futures = [pool.submit(fetch_range, url, p, bounds[i], bounds[i + 1] - 1) for i, p in enumerate(parts)]
+            while not all(f.done() for f in futures):
+                got = sum(p.stat().st_size for p in parts if p.exists())
+                rate = got / max(time.time() - t0, 1)
+                print(f"\r  {got / size:6.1%}  {got / 1e9:.2f} GB  {rate / 1e6:.1f} MB/s", end="", flush=True)
+                time.sleep(10)
+            for f in futures:
+                f.result()  # re-raise any failure
+        print()
 
-    if sum(p.stat().st_size for p in parts) != size:
+    present = [p for p in parts if p.exists()]
+    if parts[0].exists() and len(present) == len(parts) and sum(p.stat().st_size for p in parts) != size:
         raise SystemExit("parts don't add up to the server's size; rerun to resume")
-    tmp = out.with_name(out.name + ".joining")
-    with tmp.open("wb") as fh:
-        for p in parts:
-            with p.open("rb") as src:
-                while block := src.read(1 << 24):
-                    fh.write(block)
-    if tmp.stat().st_size != size:
-        raise SystemExit("joined file has the wrong size; parts kept, rerun to retry")
-    tmp.rename(out)
-    for p in parts:
-        p.unlink()  # only after the joined file is verified
+    # Join in place: append each part onto the first, deleting it once copied, so the join needs
+    # only one part's worth of extra disk (joining into a new file needs the whole sheet twice).
+    # Resumable: a part already appended is gone, and the first part's size says how far it got.
+    first = parts[0]
+    for i, p in enumerate(parts[1:], start=1):
+        if not p.exists():
+            continue  # appended in an earlier run
+        expected_before = bounds[i] - bounds[0]
+        if expected_before < first.stat().st_size < bounds[i + 1] - bounds[0]:
+            with first.open("r+b") as fh:  # an append cut off midway: drop it and redo
+                fh.truncate(expected_before)
+        if first.stat().st_size != expected_before:
+            raise SystemExit(f"{first.name} is {first.stat().st_size} bytes, expected {expected_before}; cannot resume")
+        with first.open("ab") as fh, p.open("rb") as src:
+            while block := src.read(1 << 24):
+                fh.write(block)
+        if first.stat().st_size != bounds[i + 1] - bounds[0]:
+            raise SystemExit(f"appending {p.name} gave the wrong size; stopping before deleting it")
+        p.unlink()
+    if first.stat().st_size != size:
+        raise SystemExit("joined file has the wrong size")
+    first.rename(out)
     print(f"{out.name}: {size / 1e9:.2f} GB, size verified")
 
 
