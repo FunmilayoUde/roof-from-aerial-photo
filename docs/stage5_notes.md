@@ -136,3 +136,22 @@ The oracle applies the same rules to the true roof and orientation.
 and square them to the house's main axes (from the BAG outline), so outlines and ridges become
 straight lines. No training needed. A dedicated edge output trained on the edge labels is the
 heavier alternative.
+
+## Straightening before edge typing (`roofphoto.regularise`): no gain
+
+Facets and the roof outline as polygons, simplified, short zigzags removed, sides snapped to the
+house's main axis or multiples of 45° (from the BAG outline), facets redrawn without gaps. On
+synthetic noisy shapes it recovers exact rectangles and L-shapes within 2.2% of area (tests). On
+the real predictions it changes almost nothing:
+
+| | raw precision / recall | straightened | oracle |
+|---|---|---|---|
+| any | 0.53 / 0.43 | 0.53 / 0.40 | 0.99 / 0.77 |
+| ridge | 0.50 / 0.34 | 0.52 / 0.36 | 0.96 / 0.74 |
+| eave | 0.50 / 0.43 | 0.49 / 0.40 | 0.94 / 0.85 |
+| hip | 0.24 / 0.30 | 0.26 / 0.29 | 0.98 / 0.62 |
+
+The previews show why: the "straightened" outlines are barely straighter, so on real predicted
+regions (holes, irregular shapes, ragged facet borders) the method mostly falls back to the
+simplified polygon. This tested a method that rarely engaged, not straightening as such. Not
+pursued further for now.
