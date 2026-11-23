@@ -99,3 +99,24 @@ def test_orient_weight_scales_only_the_orientation_term():
     quarter = unet.loss(out, orient, pitch, roof, orient_weight=0.25)
     expected = full["total"] - 0.75 * full["orientation"]
     assert float(quarter["total"]) == pytest.approx(float(expected), rel=1e-6)
+
+
+def test_edge_output_and_loss():
+    import torch
+
+    from roofphoto.models import unet
+
+    m = unet.build(pretrained=False, edges=True)
+    out = m(torch.zeros((1, 3, 64, 64)))
+    assert out.shape[1] == 12 + unet.N_EDGE and unet.edge_logits(out).shape[1] == unet.N_EDGE
+    assert unet.edge_logits(unet.build(pretrained=False)(torch.zeros((1, 3, 64, 64)))) is None
+    orient = torch.zeros((1, 64, 64), dtype=torch.long)
+    roof = torch.zeros((1, 64, 64), dtype=torch.long)
+    pitch = torch.full((1, 64, 64), float("nan"))
+    edges = torch.zeros((1, 64, 64), dtype=torch.long)
+    edges[0, 30:33, :] = 1
+    edges[0, :3, :] = 255
+    with_e = unet.loss(out, orient, pitch, roof, edges=edges, edge_weight=1.0)
+    without = unet.loss(out, orient, pitch, roof)
+    assert "edges" in with_e and "edges" not in without
+    assert float(with_e["total"]) == pytest.approx(float(without["total"] + with_e["edges"]), rel=1e-5)

@@ -35,6 +35,7 @@ def main() -> None:
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--pitch-weight", type=float, default=1.0)
+    ap.add_argument("--edge-weight", type=float, default=0.0, help="> 0 adds an edge-type output (Stage 5)")
     ap.add_argument(
         "--orient-weight",
         type=float,
@@ -56,13 +57,14 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     train_tiles = [t for t in TILES if t not in args.test + args.val]
     split = {"train": train_tiles, "val": args.val, "test": args.test}
-    train = ChipDataset(kept_chips(ROOT, train_tiles), train=True, seed=args.seed, aug=args.aug)
-    val = ChipDataset(kept_chips(ROOT, args.val), train=False)
+    with_edges = args.edge_weight > 0
+    train = ChipDataset(kept_chips(ROOT, train_tiles), train=True, seed=args.seed, aug=args.aug, edges=with_edges)
+    val = ChipDataset(kept_chips(ROOT, args.val), train=False, edges=with_edges)
     split |= {"n_train": len(train), "n_val": len(val)}
     (out / "split.json").write_text(json.dumps(split | {"args": vars(args)}, indent=2))
     print(f"{args.run}: {len(train)} train, {len(val)} val houses, test {args.test}, device {device}")
 
-    model = unet.build(pretrained=True).to(device)
+    model = unet.build(pretrained=True, edges=with_edges).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
     train_dl = DataLoader(train, batch_size=args.batch, shuffle=True, drop_last=True)
@@ -73,9 +75,18 @@ def main() -> None:
         t0 = time.time()
         model.train()
         tr = []
-        for img, orient, pitch, roof in train_dl:
-            img, orient, pitch, roof = img.to(device), orient.to(device), pitch.to(device), roof.to(device)
-            losses = unet.loss(model(img), orient, pitch, roof, args.pitch_weight, orient_weight=args.orient_weight)
+        for batch in train_dl:
+            img, orient, pitch, roof, *rest = (b.to(device) for b in batch)
+            losses = unet.loss(
+                model(img),
+                orient,
+                pitch,
+                roof,
+                args.pitch_weight,
+                orient_weight=args.orient_weight,
+                edges=rest[0] if rest else None,
+                edge_weight=args.edge_weight,
+            )
             opt.zero_grad()
             losses["total"].backward()
             opt.step()
@@ -85,17 +96,20 @@ def main() -> None:
         va = []
         with torch.no_grad():
             hits = [0, 0]
-            for img, orient, pitch, roof in val_dl:
-                img, orient, pitch, roof = img.to(device), orient.to(device), pitch.to(device), roof.to(device)
+            for batch in val_dl:
+                img, orient, pitch, roof, *rest = (b.to(device) for b in batch)
                 out_v = model(img)
-                va.append(
-                    {
-                        k: float(v)
-                        for k, v in unet.loss(
-                            out_v, orient, pitch, roof, args.pitch_weight, orient_weight=args.orient_weight
-                        ).items()
-                    }
+                losses_v = unet.loss(
+                    out_v,
+                    orient,
+                    pitch,
+                    roof,
+                    args.pitch_weight,
+                    orient_weight=args.orient_weight,
+                    edges=rest[0] if rest else None,
+                    edge_weight=args.edge_weight,
                 )
+                va.append({k: float(v) for k, v in losses_v.items()})
                 c, n = unet.roof_orientation_hits(out_v, orient)
                 hits[0] += c
                 hits[1] += n

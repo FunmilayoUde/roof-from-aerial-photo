@@ -20,18 +20,27 @@ import segmentation_models_pytorch as smp
 import torch
 import torch.nn.functional as F
 
+from roofphoto.data.chips import EDGE_CLASSES
 from roofphoto.models.dataset import IGNORE, N_CLASSES
 
 PITCH_SCALE_DEG = 45.0
+N_EDGE = max(EDGE_CLASSES.values()) + 1  # 0 = no edge, then one class per edge type
+NO_EDGE_WEIGHT = 0.1  # "no edge" pixels outnumber edge pixels ~30:1
 
 
-def build(pretrained: bool = True) -> torch.nn.Module:
+def build(pretrained: bool = True, edges: bool = False) -> torch.nn.Module:
+    """edges=True adds N_EDGE edge-type logits after the 12 standard channels (Stage 5)."""
     return smp.Unet(
         "resnet34",
         encoder_weights="imagenet" if pretrained else None,
         in_channels=3,
-        classes=N_CLASSES + 2,
+        classes=N_CLASSES + 2 + (N_EDGE if edges else 0),
     )
+
+
+def edge_logits(out: torch.Tensor) -> torch.Tensor | None:
+    """(B, N_EDGE, H, W) edge-type logits, or None for a model without the edge output."""
+    return out[:, N_CLASSES + 2 :] if out.shape[1] > N_CLASSES + 2 else None
 
 
 def split(out: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -47,6 +56,8 @@ def loss(
     pitch_weight: float = 1.0,
     roof_weight: float = 1.0,
     orient_weight: float = 1.0,
+    edges: torch.Tensor | None = None,
+    edge_weight: float = 0.0,
 ) -> dict:
     logits, pitch_pred, roof_logit = split(out)
     on_roof = (orient >= 1) & (orient != IGNORE)
@@ -63,7 +74,15 @@ def loss(
     else:
         pl = torch.zeros((), device=out.device)
     total = orient_weight * ce + pitch_weight * pl + roof_weight * rl
-    return {"total": total, "orientation": ce, "pitch": pl, "roof": rl}
+    result = {"orientation": ce, "pitch": pl, "roof": rl}
+    el = edge_logits(out)
+    if edges is not None and el is not None and edge_weight > 0:
+        w = torch.ones(N_EDGE, device=out.device)
+        w[0] = NO_EDGE_WEIGHT
+        ec = F.cross_entropy(el, edges, weight=w, ignore_index=IGNORE)
+        total = total + edge_weight * ec
+        result["edges"] = ec
+    return {"total": total} | result
 
 
 def roof_orientation_hits(out: torch.Tensor, orient: torch.Tensor) -> tuple[int, int]:

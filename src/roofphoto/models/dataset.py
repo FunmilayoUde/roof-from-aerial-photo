@@ -144,6 +144,12 @@ def rotate_without_orientation(image, orient, pitch, roof, rng):
     return image, orient, pitch, roof
 
 
+def load_edges(chip: Chip) -> np.ndarray:
+    """Edge-type band of the chip's labels: 0 none, EDGE_CLASSES values, 255 ignore."""
+    with rasterio.open(chip.folder / f"labels_{chip.labels}.tif") as src:
+        return src.read(2)
+
+
 class ChipDataset:
     """A torch-style dataset (len, getitem) over kept chips.
 
@@ -155,14 +161,18 @@ class ChipDataset:
     strongest cue), so it learns only from images in their true position (Stage 5).
     """
 
-    def __init__(self, chips: list[Chip], train: bool, seed: int = 0, aug: str = "geom"):
+    def __init__(self, chips: list[Chip], train: bool, seed: int = 0, aug: str = "geom", edges: bool = False):
         if aug not in ("geom", "colour", "none", "mixed"):
             raise ValueError(f"unknown augmentation {aug!r}")
+        if edges and aug == "mixed":
+            raise ValueError("edge targets are not supported with mixed augmentation")
         self.chips = chips
         self.train = train
         self.aug = aug
+        self.edges = edges
         self.rng = np.random.default_rng(seed)
         self.cache = [load_targets(c) for c in chips]  # 354 chips x ~4 MB: fits in memory
+        self.edge_cache = [load_edges(c) for c in chips] if edges else None
 
     def __len__(self) -> int:
         return len(self.chips)
@@ -171,15 +181,17 @@ class ChipDataset:
         import torch
 
         image, orient, pitch, roof = self.cache[i]
+        extra = [self.edge_cache[i]] if self.edges else []
         if self.train and self.aug in ("colour", "mixed"):
             image = colour_jitter(image, self.rng)
         if self.train and self.aug == "mixed" and self.rng.random() < 0.5:
             image, orient, pitch, roof = rotate_without_orientation(image, orient, pitch, roof, self.rng)
         if self.train and self.aug == "geom":
-            image, orient, (pitch, roof) = augment(
+            # Edge types don't depend on direction (a ridge stays a ridge), so they just move along.
+            image, orient, (pitch, roof, *extra) = augment(
                 image,
                 orient,
-                [pitch, roof],
+                [pitch, roof, *extra],
                 int(self.rng.integers(4)),
                 bool(self.rng.integers(2)),
                 bool(self.rng.integers(2)),
@@ -189,4 +201,4 @@ class ChipDataset:
             torch.from_numpy(orient.astype(np.int64)),
             torch.from_numpy(pitch.copy()),
             torch.from_numpy(roof.astype(np.int64)),
-        )
+        ) + tuple(torch.from_numpy(e.astype(np.int64)) for e in extra)

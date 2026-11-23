@@ -45,12 +45,14 @@ FOLDS = {
     "centre": (["cv_centre", "cv_centre_s1", "cv_centre_s2"], [f"s5w_centre_geom_s{s}" for s in range(3)]),
     "east": (["cv_east", "cv_east_s1", "cv_east_s2"], [f"s5w_east_geom_s{s}" for s in range(3)]),
 }
+# Learned edge output (Stage 5): scored as "model_edge" for folds that have these runs.
+EDGE_RUNS = {fold: [f"s5e_{fold}_s{s}" for s in range(3)] for fold in FOLDS}
 TOL_PX = 3.0
 MIN_FACET_PX = 150  # ~1 m² at 8 cm
 
 
-def load(run: str, device) -> torch.nn.Module:
-    m = unet.build(pretrained=False)
+def load(run: str, device, edges: bool = False) -> torch.nn.Module:
+    m = unet.build(pretrained=False, edges=edges)
     m.load_state_dict(torch.load(ROOT / "outputs/stage4" / run / "model.pt", map_location="cpu"))
     return m.to(device).eval()
 
@@ -75,17 +77,21 @@ def rates(counts: dict) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--previews", type=int, default=4, help="per fold")
+    ap.add_argument("--folds", nargs="+", default=list(FOLDS))
     args = ap.parse_args()
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     out_dir = ROOT / "outputs/stage5"
     (out_dir / "edge_previews").mkdir(parents=True, exist_ok=True)
-    result, pooled = {}, {"model": {}, "model_reg": {}, "oracle": {}}
+    result, pooled = {}, {"model": {}, "model_reg": {}, "model_edge": {}, "oracle": {}}
 
-    for fold, (roof_runs, orient_runs) in FOLDS.items():
+    for fold, (roof_runs, orient_runs) in ((f, FOLDS[f]) for f in args.folds):
         split = json.loads((ROOT / "outputs/stage4" / roof_runs[0] / "split.json").read_text())
         roof_models = [load(r, device) for r in roof_runs]
         orient_models = [load(r, device) for r in orient_runs]
-        counts = {"model": {}, "model_reg": {}, "oracle": {}}
+        edge_runs = [r for r in EDGE_RUNS[fold] if (ROOT / "outputs/stage4" / r / "model.pt").exists()]
+        edge_models = [load(r, device, edges=True) for r in edge_runs]
+        print(f"{fold}: edge models {edge_runs or 'none'}")
+        counts = {"model": {}, "model_reg": {}, "model_edge": {}, "oracle": {}}
         shown = 0
         for tile in split["test"]:
             fps = footprints(ROOT, tile)
@@ -116,6 +122,15 @@ def main() -> None:
                 ignore = binary_dilation(edges_t == IGNORE, iterations=int(TOL_PX))
                 add(counts["model"], score_edges(edges_p, edges_t, ignore, TOL_PX))
                 add(counts["model_reg"], score_edges(edges_r, edges_t, ignore, TOL_PX))
+                if edge_models:
+                    # Learned edges: mean probability over the edge models, kept within ~30 cm of
+                    # the predicted house roof (eaves sit on its outline).
+                    with torch.no_grad():
+                        ep = np.mean(
+                            [torch.softmax(unet.edge_logits(m(x))[0], 0).cpu().numpy() for m in edge_models], 0
+                        )
+                    edges_e = np.where(binary_dilation(house, iterations=4), ep.argmax(0), 0).astype(np.uint8)
+                    add(counts["model_edge"], score_edges(edges_e, edges_t, ignore, TOL_PX))
                 add(counts["oracle"], score_edges(edges_o, edges_t, ignore, TOL_PX))
                 if shown < args.previews:
                     preview(
