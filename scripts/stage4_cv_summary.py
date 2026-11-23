@@ -18,34 +18,16 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-from math import comb
 from pathlib import Path
 
 import numpy as np
 
 from roofphoto.baseline import errors
+from roofphoto.stats import compare
 
 ROOT = Path(__file__).resolve().parents[1]
 METHODS = ["model_pitch_m2", "model_pitch_xcal_m2", "model_pitch_cal_m2", "model_fallback_m2", "hybrid_m2", "b1_m2"]
 CLEAN_MAX_UNCERTAIN = 0.10
-
-
-def compare(model_err: np.ndarray, base_err: np.ndarray, n_boot: int = 5000, seed: int = 0) -> dict:
-    rng = np.random.default_rng(seed)
-    n = len(model_err)
-    diffs = []
-    for _ in range(n_boot):
-        i = rng.integers(0, n, n)
-        diffs.append(np.median(model_err[i]) - np.median(base_err[i]))
-    lo, hi = np.percentile(diffs, [2.5, 97.5])
-    wins = int((model_err < base_err).sum())
-    p = sum(comb(n, k) for k in range(wins, n + 1)) / 2**n
-    return {
-        "median_diff_pts": round(100 * float(np.median(model_err) - np.median(base_err)), 1),
-        "ci95_pts": [round(100 * float(lo), 1), round(100 * float(hi), 1)],
-        "model_better_houses": f"{wins}/{n}",
-        "sign_test_p_one_sided": round(p, 4),
-    }
 
 
 def main() -> None:
