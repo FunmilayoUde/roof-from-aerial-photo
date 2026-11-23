@@ -3,7 +3,9 @@ correction model fits better, pooled over every house.
 
     uv run python scripts/stage2_summary.py 32CN1_03 32CN1_04 ...      # tile names under outputs/stage2/
 
-Writes outputs/stage2/summary_all.json and figures in outputs/stage2/figures/.
+Writes outputs/stage2/summary_all.json and figures in outputs/stage2/figures/ for Bilthoven (sheet
+32CN1); for tiles of any other sheet, the same files go in outputs/stage2/summary_<sheet>/, so a
+second town never overwrites Bilthoven's summary.
 """
 
 from __future__ import annotations
@@ -33,7 +35,9 @@ def main() -> None:
     ap.add_argument("tiles", nargs="+")
     args = ap.parse_args()
     out = ROOT / "outputs" / "stage2"
-    figs = out / "figures"
+    sheets = {t.split("_")[0] for t in args.tiles}
+    dest = out if sheets == {"32CN1"} else out / f"summary_{'_'.join(sorted(sheets))}"
+    figs = dest / "figures"
     figs.mkdir(parents=True, exist_ok=True)
 
     rows, by_height = [], {}
@@ -106,7 +110,7 @@ def main() -> None:
             for b, v in sorted(by_height.items(), key=lambda kv: float(kv[0].split("-")[0]))
         },
     }
-    (out / "summary_all.json").write_text(json.dumps(summary, indent=2))
+    (dest / "summary_all.json").write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary, indent=2))
     plot_shift_map(rows, figs / "shift_map.png")
     plot_distributions(kept, figs / "distributions.png")
