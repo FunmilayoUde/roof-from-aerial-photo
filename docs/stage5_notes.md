@@ -50,3 +50,23 @@ of the validation loss, checkpoint selection takes it into account.
 
 **Next test:** with the new loss, rotations vs colour-only augmentation, 3 seeds each, on the
 west fold (runs `s5_west_geom_s{0,1,2}` and `s5_west_colour_s{0,1,2}`).
+
+## Result of the roof-only orientation loss (west fold, 3 seeds each)
+
+| | Stage 4 | new loss, rotations | new loss, colour only |
+|---|---|---|---|
+| orientation, test (mean, range) | 18–54% | 58% (49–64%) | 59% (57–60%) |
+| orientation, training | 31–66% | 79% | 95% |
+| roof IoU | 0.84 | 0.57 | 0.51 |
+| median area error | 9.5% | 26.5% | 35.5% |
+| pitch error, median per house | 8.6° | 13.8° | 12.6° |
+
+Orientation is better and far more stable, colour-only especially (57–60% across seeds), but
+roof extent, pitch and area got much worse. The roof-only orientation loss is a hard 9-way
+choice, worth about 1.0 against the roof loss's 0.1–0.2, so it dominates the shared network
+(validation roof loss 0.17–0.22 against Stage 4's 0.069). Checkpoint selection follows it too:
+colour-only kept epoch 15, when orientation started to overfit and roof was still half-trained.
+
+**Next:** weight orientation at about 0.25, and choose checkpoints by that same weighted total;
+repeat the 3-seed comparison. Fallback if that can't keep both: separate models for roof/pitch
+and for orientation.
