@@ -173,3 +173,32 @@ It predicts only eaves and ridges (and a few rakes); where it predicts an edge i
 the right place, but rare types never beat "no edge" at any pixel. Likely better: learn only where
 edges are (edge vs not, a more balanced task) and take each edge's type from the geometric rules,
 which are 84–99% precise on true orientation.
+
+## Learned edge locations, typed by the rules (one seed, west fold)
+
+The edge output learns only edge vs none (`s5b_west_s0`); each predicted edge pixel takes the type
+of the nearest rule-based edge. At a 0.5 probability threshold it finds far more edges (any-type
+recall 0.75 against the rules' 0.42, close to the oracle's 0.76; ridges 0.62, hips 0.51), but
+precision falls to 0.38.
+
+Threshold and thinning check (precision / recall, scored on the west test houses):
+
+| | any | ridge | eave | hip | valley |
+|---|---|---|---|---|---|
+| rules | 0.51 / 0.42 | 0.43 / 0.33 | 0.53 / 0.43 | 0.26 / 0.24 | 0.05 / 0.02 |
+| threshold 0.5 | 0.38 / 0.75 | 0.20 / 0.62 | 0.31 / 0.64 | 0.20 / 0.51 | 0.11 / 0.11 |
+| threshold 0.7 | 0.48 / 0.43 | 0.26 / 0.37 | 0.39 / 0.37 | 0.33 / 0.36 | 0.13 / 0.05 |
+| threshold 0.7, thinned to 1 px | 0.56 / 0.26 | 0.29 / 0.19 | 0.44 / 0.22 | 0.36 / 0.21 | 0.15 / 0.02 |
+| threshold 0.9 | 0.53 / 0.05 | 0.37 / 0.07 | 0.47 / 0.04 | 0.41 / 0.04 | 0.20 / 0.01 |
+
+- **Thickness was not the problem**: thinning lifts precision only 2–8 points and destroys recall;
+  predicted edges are often in the wrong place.
+- **No setting beats the rules overall**; at 0.7 it roughly ties. Learned locations are better for
+  hips and valleys (internal lines), the rules for ridges and eaves.
+- Choosing a threshold or a per-type mix from this table would tune on test houses; a fair
+  choice needs validation houses and several seeds.
+
+**Status:** edges stay rule-based for now (about half of predicted edges right; ridges and eaves
+best, valleys weakest). They are limited by roof-outline and orientation accuracy; more and more
+varied training data (a second town) is the broadest lever, and the per-type mix can be revisited
+with a validation-based choice.
