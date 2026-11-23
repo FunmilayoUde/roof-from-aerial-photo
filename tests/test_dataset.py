@@ -120,3 +120,19 @@ def test_edge_output_and_loss():
     without = unet.loss(out, orient, pitch, roof)
     assert "edges" in with_e and "edges" not in without
     assert float(with_e["total"]) == pytest.approx(float(without["total"] + with_e["edges"]), rel=1e-5)
+
+
+def test_image_orientation_loss_is_stage4s():
+    import torch
+    import torch.nn.functional as F
+
+    from roofphoto.models import unet
+
+    torch.manual_seed(1)
+    out = torch.randn((2, 12, 8, 8))
+    orient = torch.randint(0, 10, (2, 8, 8))
+    orient[0, :2] = 255
+    roof = (orient > 0).long()
+    pitch = torch.full((2, 8, 8), float("nan"))
+    got = unet.loss(out, orient, pitch, roof, orient_loss="image")["orientation"]
+    assert float(got) == pytest.approx(float(F.cross_entropy(out[:, :10], orient, ignore_index=255)))

@@ -59,10 +59,15 @@ def loss(
     edges: torch.Tensor | None = None,
     edge_weight: float = 0.0,
     edge_binary: bool = False,
+    orient_loss: str = "roof",
 ) -> dict:
+    """orient_loss: "roof" (Stage 5) over labelled roof pixels among the 9 roof classes; "image"
+    (Stage 4) over every labelled pixel among all 10 classes, background included."""
     logits, pitch_pred, roof_logit = split(out)
     on_roof = (orient >= 1) & (orient != IGNORE)
-    if on_roof.any():
+    if orient_loss == "image":
+        ce = F.cross_entropy(logits, orient, ignore_index=IGNORE)
+    elif on_roof.any():
         roof_logits = logits.permute(0, 2, 3, 1)[on_roof][:, 1:]  # (pixels, 9): flat + 8 directions
         ce = F.cross_entropy(roof_logits, orient[on_roof] - 1)
     else:

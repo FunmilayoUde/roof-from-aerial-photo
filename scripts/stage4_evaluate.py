@@ -96,6 +96,8 @@ def main() -> None:
     ap.add_argument("--run", required=True)
     ap.add_argument("--previews", type=int, default=8)
     ap.add_argument("--on", choices=["test", "val"], default="test", help="which held-out houses to score")
+    ap.add_argument("--tiles", nargs="+", help="score these tiles instead (written as per_house_<tag>.csv)")
+    ap.add_argument("--tag", default="", help="with --tiles: suffix for the output files")
     args = ap.parse_args()
     run = ROOT / "outputs" / "stage4" / args.run
     split = json.loads((run / "split.json").read_text())
@@ -117,9 +119,12 @@ def main() -> None:
     rows, inter, union, correct, labelled = [], 0, 0, 0, 0
     (run / "previews").mkdir(exist_ok=True)
     suffix = "" if args.on == "test" else "_val"
-    if args.on == "val":
+    tiles = split[args.on]
+    if args.tiles:
+        suffix, tiles = f"_{args.tag or 'tiles'}", args.tiles
+    if args.on == "val" or args.tiles:
         args.previews = 0
-    for tile in split[args.on]:
+    for tile in tiles:
         fps, man = footprints(tile), manifest(tile)
         for chip in kept_chips(ROOT, [tile]):
             image, orient, pitch_t, roof_t = load_targets(chip)
@@ -192,7 +197,7 @@ def main() -> None:
     methods = ["model_pitch_m2", "model_fallback_m2", "hybrid_m2", "b1_m2", "plan_m2"]
     result = {
         "run": args.run,
-        "scored": split[args.on],
+        "scored": tiles,
         "on": args.on,
         "houses": len(rows),
         "b1_factor": round(b1.k_all, 3),

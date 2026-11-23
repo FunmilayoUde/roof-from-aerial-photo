@@ -30,6 +30,10 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--run", required=True)
     ap.add_argument("--test", nargs="+", default=["32CN1_10", "32CN1_15", "32CN1_20"])
+    ap.add_argument("--extra-tiles", nargs="*", default=[], help="more tiles to train on (e.g. a second town)")
+    ap.add_argument(
+        "--orient-loss", choices=["roof", "image"], default="roof", help="image = Stage 4's orientation loss"
+    )
     ap.add_argument("--val", nargs="+", default=["32CN1_13"])
     ap.add_argument("--epochs", type=int, default=40)
     ap.add_argument("--batch", type=int, default=8)
@@ -56,7 +60,7 @@ def main() -> None:
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     out = ROOT / "outputs" / "stage4" / args.run
     out.mkdir(parents=True, exist_ok=True)
-    train_tiles = [t for t in TILES if t not in args.test + args.val]
+    train_tiles = [t for t in TILES + args.extra_tiles if t not in args.test + args.val]
     split = {"train": train_tiles, "val": args.val, "test": args.test}
     with_edges = args.edge_weight > 0
     train = ChipDataset(
@@ -95,6 +99,7 @@ def main() -> None:
                 edges=rest[0] if rest else None,
                 edge_weight=args.edge_weight,
                 edge_binary=args.edge_binary,
+                orient_loss=args.orient_loss,
             )
             opt.zero_grad()
             losses["total"].backward()
@@ -118,6 +123,7 @@ def main() -> None:
                     edges=rest[0] if rest else None,
                     edge_weight=args.edge_weight,
                     edge_binary=args.edge_binary,
+                    orient_loss=args.orient_loss,
                 )
                 va.append({k: float(v) for k, v in losses_v.items()})
                 c, n = unet.roof_orientation_hits(out_v, orient)
