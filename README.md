@@ -23,6 +23,7 @@ folder name ends in a space; `pyproject.toml` points at it through `[tool.uv.sou
 | 2. Dataset | `scripts/download_ahn.py`, `scripts/crop_sheet.py`, then `scripts/stage2_build_dataset.py --tile <LAZ>` per sub-tile and `scripts/stage2_summary.py` | [docs/stage2_report.md](docs/stage2_report.md) |
 | 3. Baseline | `uv run python scripts/stage3_baseline.py` | [docs/stage3_report.md](docs/stage3_report.md) |
 | 4. First model | `scripts/stage4_train.py`, `scripts/stage4_evaluate.py` per fold, then `scripts/stage4_cv_summary.py` | [docs/stage4_report.md](docs/stage4_report.md) |
+| Second town | `scripts/download_ahn.py`, `crop_sheet.py`, Stage 2 per sub-tile, then `scripts/new_town_eval.py` | [docs/second_town_report.md](docs/second_town_report.md) |
 
 Stage 1 downloads the PDOK photo around a house, crops it like the LiDAR pipeline does, measures
 how far the photo's roof edges sit from the LiDAR edges, and writes overlays to
