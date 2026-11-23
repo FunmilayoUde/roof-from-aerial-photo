@@ -1,0 +1,167 @@
+"""Stage 5: facets and edge types from the trained models, scored against the Stage 2 edge labels.
+
+    uv run python scripts/stage5_edges.py
+
+Per fold, on its test houses:
+  roof         mean roof probability of the 3 Stage 4 models (cv_<fold>, _s1, _s2) > 0.5, keeping
+               the regions that touch the house's BAG outline + 1.5 m (as in the area evaluation)
+  orientation  mean of the 3 orientation models' probabilities (s5w_<fold>_geom_s0..2), over the
+               9 roof classes, inside that roof
+  facets/edges roofphoto.edges: connected regions of one orientation; boundaries typed by geometry
+Scored per edge type: a predicted edge pixel is correct if a labelled edge of the same type lies
+within 3 px (24 cm), and a labelled pixel is found if a prediction of its type does. Pixels within
+3 px of label-ignore regions (neighbours, uncertain facets) are left out.
+An "oracle" applies the same rules to the true roof and orientation labels: the ceiling of the
+rules themselves, separating rule errors from prediction errors.
+Writes outputs/stage5/edges.json and previews in outputs/stage5/edge_previews/.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import rasterio  # noqa: E402
+import torch  # noqa: E402
+from rasterio.features import rasterize  # noqa: E402
+from scipy.ndimage import binary_dilation, label  # noqa: E402
+
+from roofphoto.data.chips import EDGE_CLASSES  # noqa: E402
+from roofphoto.data.lookup import footprints  # noqa: E402
+from roofphoto.edges import edge_raster, facets_from_orientation, score_edges  # noqa: E402
+from roofphoto.models import unet  # noqa: E402
+from roofphoto.models.dataset import IGNORE, IMAGENET_MEAN, IMAGENET_STD, kept_chips, load_targets  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[1]
+FOLDS = {
+    "west": (["cv_west", "cv_west_s1", "cv_west_s2"], [f"s5w_west_geom_s{s}" for s in range(3)]),
+    "centre": (["cv_centre", "cv_centre_s1", "cv_centre_s2"], [f"s5w_centre_geom_s{s}" for s in range(3)]),
+    "east": (["cv_east", "cv_east_s1", "cv_east_s2"], [f"s5w_east_geom_s{s}" for s in range(3)]),
+}
+TOL_PX = 3.0
+MIN_FACET_PX = 150  # ~1 m² at 8 cm
+
+
+def load(run: str, device) -> torch.nn.Module:
+    m = unet.build(pretrained=False)
+    m.load_state_dict(torch.load(ROOT / "outputs/stage4" / run / "model.pt", map_location="cpu"))
+    return m.to(device).eval()
+
+
+def add(total: dict, part: dict) -> None:
+    for k, v in part.items():
+        total[k] = [a + b for a, b in zip(total.get(k, [0, 0, 0, 0]), v)]
+
+
+def rates(counts: dict) -> dict:
+    return {
+        k: {
+            "precision": round(tp_p / n_p, 3) if n_p else None,
+            "recall": round(tp_t / n_t, 3) if n_t else None,
+            "predicted_px": n_p,
+            "labelled_px": n_t,
+        }
+        for k, (tp_p, n_p, tp_t, n_t) in counts.items()
+    }
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--previews", type=int, default=4, help="per fold")
+    args = ap.parse_args()
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    out_dir = ROOT / "outputs/stage5"
+    (out_dir / "edge_previews").mkdir(parents=True, exist_ok=True)
+    result, pooled = {}, {"model": {}, "oracle": {}}
+
+    for fold, (roof_runs, orient_runs) in FOLDS.items():
+        split = json.loads((ROOT / "outputs/stage4" / roof_runs[0] / "split.json").read_text())
+        roof_models = [load(r, device) for r in roof_runs]
+        orient_models = [load(r, device) for r in orient_runs]
+        counts = {"model": {}, "oracle": {}}
+        shown = 0
+        for tile in split["test"]:
+            fps = footprints(ROOT, tile)
+            for chip in kept_chips(ROOT, [tile]):
+                image, orient_t, _, roof_t = load_targets(chip)
+                with rasterio.open(chip.folder / f"labels_{chip.labels}.tif") as src:
+                    edges_t, t = src.read(2), src.transform
+                x = torch.from_numpy(image)[None].to(device)
+                with torch.no_grad():
+                    roof_p = np.mean([torch.sigmoid(unet.split(m(x))[2][0]).cpu().numpy() for m in roof_models], 0)
+                    probs = np.mean(
+                        [torch.softmax(unet.split(m(x))[0][0, 1:], 0).cpu().numpy() for m in orient_models], 0
+                    )
+                orient_p = probs.argmax(0) + 1
+                seed = rasterize([(fps[chip.house_id].buffer(1.5), 1)], out_shape=orient_t.shape, transform=t) == 1
+                comp, _ = label(roof_p > 0.5, structure=np.ones((3, 3)))
+                house = np.isin(comp, np.unique(comp[seed & (comp > 0)])) & (comp > 0)
+
+                facets, cls = facets_from_orientation(house, orient_p, MIN_FACET_PX)
+                edges_p = edge_raster(facets, cls)
+                known = (orient_t >= 1) & (orient_t != IGNORE)
+                facets_o, cls_o = facets_from_orientation(known, orient_t.astype(int), MIN_FACET_PX)
+                edges_o = edge_raster(facets_o, cls_o)
+
+                ignore = binary_dilation(edges_t == IGNORE, iterations=int(TOL_PX))
+                add(counts["model"], score_edges(edges_p, edges_t, ignore, TOL_PX))
+                add(counts["oracle"], score_edges(edges_o, edges_t, ignore, TOL_PX))
+                if shown < args.previews:
+                    preview(
+                        image,
+                        edges_t,
+                        edges_o,
+                        edges_p,
+                        chip.house_id,
+                        out_dir / "edge_previews" / f"{chip.house_id}.png",
+                    )
+                    shown += 1
+        result[fold] = {k: rates(v) for k, v in counts.items()}
+        for k in counts:
+            add(pooled[k], counts[k])
+        print(
+            fold,
+            json.dumps(
+                {
+                    k: {
+                        t: v
+                        for t, v in rates(counts[k]).items()
+                        if t in ("any", "ridge", "eave", "rake", "hip", "valley")
+                    }
+                    for k in counts
+                }
+            ),
+        )
+    result["pooled"] = {k: rates(v) for k, v in pooled.items()}
+    (out_dir / "edges.json").write_text(json.dumps(result, indent=2))
+    print(json.dumps(result["pooled"], indent=2))
+
+
+def preview(image, truth, oracle, pred, hid, path) -> None:
+    rgb = np.clip(np.moveaxis(image * IMAGENET_STD + IMAGENET_MEAN, 0, -1), 0, 1)
+    cmap = plt.get_cmap("tab10", len(EDGE_CLASSES) + 1)
+    fig, axs = plt.subplots(1, 3, figsize=(15, 5.4), constrained_layout=True)
+    for ax, e, title in (
+        (axs[0], truth, "labels (from LiDAR)"),
+        (axs[1], oracle, "rules on true orientation"),
+        (axs[2], pred, "rules on predictions"),
+    ):
+        ax.imshow(rgb)
+        shown = np.ma.masked_where((e == 0) | (e == IGNORE), e)
+        ax.imshow(shown, cmap=cmap, vmin=0, vmax=len(EDGE_CLASSES), interpolation="nearest")
+        ax.set_title(f"{hid}: {title}", fontsize=9)
+        ax.set_axis_off()
+    handles = [plt.Line2D([], [], color=cmap(v), lw=3, label=k) for k, v in EDGE_CLASSES.items() if k != "unclassified"]
+    axs[2].legend(handles=handles, fontsize=7, loc="lower right")
+    fig.savefig(path, dpi=90)
+    plt.close(fig)
+
+
+if __name__ == "__main__":
+    main()
