@@ -35,6 +35,7 @@ from scipy.ndimage import binary_dilation, label  # noqa: E402
 from roofphoto.data.chips import EDGE_CLASSES  # noqa: E402
 from roofphoto.data.lookup import footprints  # noqa: E402
 from roofphoto.edges import edge_raster, facets_from_orientation, score_edges  # noqa: E402
+from roofphoto.regularise import axis_angle_px, regularise_facets  # noqa: E402
 from roofphoto.models import unet  # noqa: E402
 from roofphoto.models.dataset import IGNORE, IMAGENET_MEAN, IMAGENET_STD, kept_chips, load_targets  # noqa: E402
 
@@ -78,13 +79,13 @@ def main() -> None:
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     out_dir = ROOT / "outputs/stage5"
     (out_dir / "edge_previews").mkdir(parents=True, exist_ok=True)
-    result, pooled = {}, {"model": {}, "oracle": {}}
+    result, pooled = {}, {"model": {}, "model_reg": {}, "oracle": {}}
 
     for fold, (roof_runs, orient_runs) in FOLDS.items():
         split = json.loads((ROOT / "outputs/stage4" / roof_runs[0] / "split.json").read_text())
         roof_models = [load(r, device) for r in roof_runs]
         orient_models = [load(r, device) for r in orient_runs]
-        counts = {"model": {}, "oracle": {}}
+        counts = {"model": {}, "model_reg": {}, "oracle": {}}
         shown = 0
         for tile in split["test"]:
             fps = footprints(ROOT, tile)
@@ -105,12 +106,16 @@ def main() -> None:
 
                 facets, cls = facets_from_orientation(house, orient_p, MIN_FACET_PX)
                 edges_p = edge_raster(facets, cls)
+                # Straightened: facets as polygons squared to the house's axes (from its outline).
+                facets_r = regularise_facets(facets, axis_angle_px(fps[chip.house_id], t))
+                edges_r = edge_raster(facets_r, {i: c for i, c in cls.items() if (facets_r == i).any()})
                 known = (orient_t >= 1) & (orient_t != IGNORE)
                 facets_o, cls_o = facets_from_orientation(known, orient_t.astype(int), MIN_FACET_PX)
                 edges_o = edge_raster(facets_o, cls_o)
 
                 ignore = binary_dilation(edges_t == IGNORE, iterations=int(TOL_PX))
                 add(counts["model"], score_edges(edges_p, edges_t, ignore, TOL_PX))
+                add(counts["model_reg"], score_edges(edges_r, edges_t, ignore, TOL_PX))
                 add(counts["oracle"], score_edges(edges_o, edges_t, ignore, TOL_PX))
                 if shown < args.previews:
                     preview(
@@ -118,6 +123,7 @@ def main() -> None:
                         edges_t,
                         edges_o,
                         edges_p,
+                        edges_r,
                         chip.house_id,
                         out_dir / "edge_previews" / f"{chip.house_id}.png",
                     )
@@ -143,14 +149,15 @@ def main() -> None:
     print(json.dumps(result["pooled"], indent=2))
 
 
-def preview(image, truth, oracle, pred, hid, path) -> None:
+def preview(image, truth, oracle, pred, pred_reg, hid, path) -> None:
     rgb = np.clip(np.moveaxis(image * IMAGENET_STD + IMAGENET_MEAN, 0, -1), 0, 1)
     cmap = plt.get_cmap("tab10", len(EDGE_CLASSES) + 1)
-    fig, axs = plt.subplots(1, 3, figsize=(15, 5.4), constrained_layout=True)
+    fig, axs = plt.subplots(1, 4, figsize=(20, 5.4), constrained_layout=True)
     for ax, e, title in (
         (axs[0], truth, "labels (from LiDAR)"),
         (axs[1], oracle, "rules on true orientation"),
         (axs[2], pred, "rules on predictions"),
+        (axs[3], pred_reg, "predictions, straightened"),
     ):
         ax.imshow(rgb)
         shown = np.ma.masked_where((e == 0) | (e == IGNORE), e)
@@ -158,7 +165,7 @@ def preview(image, truth, oracle, pred, hid, path) -> None:
         ax.set_title(f"{hid}: {title}", fontsize=9)
         ax.set_axis_off()
     handles = [plt.Line2D([], [], color=cmap(v), lw=3, label=k) for k, v in EDGE_CLASSES.items() if k != "unclassified"]
-    axs[2].legend(handles=handles, fontsize=7, loc="lower right")
+    axs[3].legend(handles=handles, fontsize=7, loc="lower right")
     fig.savefig(path, dpi=90)
     plt.close(fig)
 
