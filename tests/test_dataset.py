@@ -82,3 +82,20 @@ def test_orientation_loss_ignores_background_and_counts_roof_pixels():
     loss = unet.loss(out, orient, pitch, roof)
     assert float(loss["orientation"]) < 1e-3
     assert unet.roof_orientation_hits(out, orient) == (4, 4)
+
+
+def test_orient_weight_scales_only_the_orientation_term():
+    import torch
+
+    from roofphoto.models import unet
+
+    torch.manual_seed(0)
+    out = torch.randn((1, 12, 4, 4))
+    orient = torch.zeros((1, 4, 4), dtype=torch.long)
+    orient[0, :2, :2] = 5
+    roof = (orient > 0).long()
+    pitch = torch.where(orient > 0, torch.tensor(30.0), torch.tensor(float("nan")))
+    full = unet.loss(out, orient, pitch, roof)
+    quarter = unet.loss(out, orient, pitch, roof, orient_weight=0.25)
+    expected = full["total"] - 0.75 * full["orientation"]
+    assert float(quarter["total"]) == pytest.approx(float(expected), rel=1e-6)

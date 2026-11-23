@@ -35,6 +35,12 @@ def main() -> None:
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--pitch-weight", type=float, default=1.0)
+    ap.add_argument(
+        "--orient-weight",
+        type=float,
+        default=1.0,
+        help="orientation's share of the loss; the roof-only orientation loss is ~1 vs roof ~0.1-0.2 (Stage 5)",
+    )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument(
         "--aug",
@@ -69,7 +75,7 @@ def main() -> None:
         tr = []
         for img, orient, pitch, roof in train_dl:
             img, orient, pitch, roof = img.to(device), orient.to(device), pitch.to(device), roof.to(device)
-            losses = unet.loss(model(img), orient, pitch, roof, args.pitch_weight)
+            losses = unet.loss(model(img), orient, pitch, roof, args.pitch_weight, orient_weight=args.orient_weight)
             opt.zero_grad()
             losses["total"].backward()
             opt.step()
@@ -82,7 +88,14 @@ def main() -> None:
             for img, orient, pitch, roof in val_dl:
                 img, orient, pitch, roof = img.to(device), orient.to(device), pitch.to(device), roof.to(device)
                 out_v = model(img)
-                va.append({k: float(v) for k, v in unet.loss(out_v, orient, pitch, roof, args.pitch_weight).items()})
+                va.append(
+                    {
+                        k: float(v)
+                        for k, v in unet.loss(
+                            out_v, orient, pitch, roof, args.pitch_weight, orient_weight=args.orient_weight
+                        ).items()
+                    }
+                )
                 c, n = unet.roof_orientation_hits(out_v, orient)
                 hits[0] += c
                 hits[1] += n

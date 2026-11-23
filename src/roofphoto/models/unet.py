@@ -46,6 +46,7 @@ def loss(
     roof: torch.Tensor,
     pitch_weight: float = 1.0,
     roof_weight: float = 1.0,
+    orient_weight: float = 1.0,
 ) -> dict:
     logits, pitch_pred, roof_logit = split(out)
     on_roof = (orient >= 1) & (orient != IGNORE)
@@ -61,7 +62,8 @@ def loss(
         pl = F.smooth_l1_loss(pitch_pred[has_pitch] / PITCH_SCALE_DEG, pitch[has_pitch] / PITCH_SCALE_DEG)
     else:
         pl = torch.zeros((), device=out.device)
-    return {"total": ce + pitch_weight * pl + roof_weight * rl, "orientation": ce, "pitch": pl, "roof": rl}
+    total = orient_weight * ce + pitch_weight * pl + roof_weight * rl
+    return {"total": total, "orientation": ce, "pitch": pl, "roof": rl}
 
 
 def roof_orientation_hits(out: torch.Tensor, orient: torch.Tensor) -> tuple[int, int]:
