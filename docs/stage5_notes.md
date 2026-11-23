@@ -102,3 +102,37 @@ and east folds (3 seeds each).
 All nine runs land at 61–69%. On sloped test pixels: 65–75% exactly right, 5–12% one step off,
 10–19% off by 90° (the largest remaining error, likely adjacent facets of hipped roofs), 3–7%
 opposite. Flat vs sloped is right 87–91% of the time. Runs: `s5w_<fold>_geom_s{0,1,2}`.
+
+## Edge types by geometry (`roofphoto.edges`, `scripts/stage5_edges.py`)
+
+Roof from the 3 Stage 4 models (averaged), orientation from the 3 orientation models (averaged);
+facets are connected regions of one orientation (fragments under ~1 m² merged); boundaries are
+typed by which way the facets on either side slope (ridge/hip/valley/break between facets;
+eave/rake/perimeter against the outside, from the local outward direction). Scored on all 351
+test houses: a predicted edge pixel is right if a labelled edge of the same type is within 24 cm.
+The oracle applies the same rules to the true roof and orientation.
+
+| edge type | model precision | model recall | oracle precision | oracle recall |
+|---|---|---|---|---|
+| any edge | 0.53 | 0.43 | 0.99 | 0.77 |
+| ridge | 0.50 | 0.34 | 0.96 | 0.74 |
+| eave | 0.50 | 0.43 | 0.94 | 0.85 |
+| rake | 0.46 | 0.27 | 0.84 | 0.81 |
+| hip | 0.24 | 0.30 | 0.98 | 0.62 |
+| perimeter | 0.41 | 0.20 | 0.98 | 0.68 |
+| valley | 0.07 | 0.03 | 0.91 | 0.40 |
+| break | 0.03 | 0.04 | 0.45 | 0.18 |
+
+- **The rules are sound**: on true orientation they reproduce the LiDAR edges (precision
+  0.84–0.99) for every type but break.
+- **Break is a rule gap**: in the LiDAR labels it is mostly a pitch change between parts facing
+  the same way, which orientation classes can't see (both get the same class and merge).
+- **Predictions are the bottleneck.** The previews show rounded, wobbly roof outlines (eaves and
+  rakes drift out of tolerance), ridges found in the right place but wavy, and spurious internal
+  lines where orientation flickers (most false valleys and breaks). Consistent across folds
+  (any-edge precision 0.51–0.55).
+
+**Next:** regularise the geometry before typing edges: turn facets into polygons, simplify them,
+and square them to the house's main axes (from the BAG outline), so outlines and ridges become
+straight lines. No training needed. A dedicated edge output trained on the edge labels is the
+heavier alternative.
