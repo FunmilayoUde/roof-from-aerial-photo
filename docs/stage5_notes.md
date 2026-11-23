@@ -90,3 +90,15 @@ and for orientation.
 8.9% median area error); orientation from separate models trained with the weighted loss and
 rotations, used inside the Stage 4 roof mask. Remaining work: orientation models for the centre
 and east folds (3 seeds each).
+
+## Orientation models for all folds (weighted loss 0.25, rotations, 3 seeds each)
+
+| fold | test orientation accuracy (mean, range) | Stage 4 seed 0 |
+|---|---|---|
+| west | 64% (61–67%) | 32% |
+| centre | 65% (62–67%) | 39% |
+| east | 65% (62–69%) | 18% |
+
+All nine runs land at 61–69%. On sloped test pixels: 65–75% exactly right, 5–12% one step off,
+10–19% off by 90° (the largest remaining error, likely adjacent facets of hipped roofs), 3–7%
+opposite. Flat vs sloped is right 87–91% of the time. Runs: `s5w_<fold>_geom_s{0,1,2}`.
