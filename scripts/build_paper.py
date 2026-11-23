@@ -93,7 +93,7 @@ def build_html() -> Path:
     page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Measuring Roofs with a LiDAR Teacher</title>
+<title>Roof Geometry from Orthophotos</title>
 <link rel="stylesheet" href="{KATEX}/katex.min.css">
 <script defer src="{KATEX}/katex.min.js"></script>
 <script defer src="{KATEX}/contrib/auto-render.min.js"

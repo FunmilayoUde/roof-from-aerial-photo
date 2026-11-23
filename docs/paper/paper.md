@@ -1,4 +1,4 @@
-# Learning to Measure Roofs from Aerial Photographs with a LiDAR Teacher
+# Roof Geometry from Aerial Orthophotos under Airborne LiDAR Supervision
 
 **Oluwatifunmilayo Ude**
 
