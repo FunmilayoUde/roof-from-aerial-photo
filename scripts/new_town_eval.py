@@ -38,8 +38,10 @@ from roofphoto.stats import compare
 
 ROOT = Path(__file__).resolve().parents[1]
 BILTHOVEN = [f"32CN1_{k}" for k in ("03", "04", "05", "08", "09", "10", "13", "15", "20")]
+HEEMSTEDE = ["25CN1_01", "25CN1_02", "25CN1_06", "25CN1_07", "25CN1_13"]
 FOLDS = ("west", "centre", "east")
 AREA_RUNS = [f"cv_{f}{s}" for f in FOLDS for s in ("", "_s1", "_s2")]
+TWO_TOWN_RUNS = [f"bt_{f}" for f in FOLDS]  # trained on Bilthoven + Heemstede, seed 0
 ORIENT_RUNS = [f"s5w_{f}_geom_s{s}" for f in FOLDS for s in range(3)]
 RES = 0.08
 MAX_PITCH_DEG = 70.0
@@ -50,6 +52,17 @@ def load(run: str, device) -> torch.nn.Module:
     m = unet.build(pretrained=False)
     m.load_state_dict(torch.load(ROOT / "outputs/stage4" / run / "model.pt", map_location="cpu"))
     return m.to(device).eval()
+
+
+def two_town_calibration() -> float:
+    """median(LiDAR area / model area) over both towns' out-of-fold houses of the two-town models."""
+    ratios = []
+    for f in FOLDS:
+        for tag in ("bilt", "heem"):
+            for r in csv.DictReader(open(ROOT / "outputs/stage4" / f"bt_{f}" / f"per_house_{tag}.csv")):
+                if float(r["model_pitch_m2"]) > 0:
+                    ratios.append(float(r["truth_m2"]) / float(r["model_pitch_m2"]))
+    return float(np.median(ratios))
 
 
 def bilthoven_calibration() -> float:
@@ -76,19 +89,26 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("tiles", nargs="+")
     ap.add_argument("--name", required=True)
+    ap.add_argument(
+        "--models",
+        choices=["bilthoven", "two-town"],
+        default="bilthoven",
+        help="bilthoven: 9 Bilthoven-only area models; two-town: the 3 models trained on Bilthoven + Heemstede",
+    )
     args = ap.parse_args()
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-    out = ROOT / "outputs/new_town" / args.name
+    out = ROOT / "outputs/new_town" / (args.name + ("" if args.models == "bilthoven" else "_two_town"))
     out.mkdir(parents=True, exist_ok=True)
 
-    bilt = [r for t in BILTHOVEN for r in manifest(ROOT, t).values() if r["status"] == "kept"]
+    train_towns = BILTHOVEN + (HEEMSTEDE if args.models == "two-town" else [])
+    bilt = [r for t in train_towns for r in manifest(ROOT, t).values() if r["status"] == "kept"]
     b1 = fit(
         np.array([float(r["footprint_m2"]) for r in bilt]),
         np.array([float(r["roof_area_m2"]) for r in bilt]),
         np.array([int(r["built"]) for r in bilt]),
     )
-    cal = bilthoven_calibration()
-    area_models = [load(r, device) for r in AREA_RUNS]
+    cal = bilthoven_calibration() if args.models == "bilthoven" else two_town_calibration()
+    area_models = [load(r, device) for r in (AREA_RUNS if args.models == "bilthoven" else TWO_TOWN_RUNS)]
     orient_models = [load(r, device) for r in ORIENT_RUNS]
 
     rows, inter, union, o_hit, o_n, edge_counts = [], 0, 0, 0, 0, {}
@@ -168,12 +188,13 @@ def main() -> None:
     err = {k: np.abs(v / truth - 1) for k, v in est.items()}
     result = {
         "town": args.name,
+        "models": args.models,
         "tiles": args.tiles,
         "houses": len(rows),
         "clean_houses": int(clean.sum()),
         "factors": {
-            "bilthoven_b1": round(b1.k_all, 3),
-            "bilthoven_calibration": round(cal, 4),
+            "baseline_b1_from_training_towns": round(b1.k_all, 3),
+            "calibration_from_training_towns": round(cal, 4),
             "local_reference": round(local.k_all, 3),
         },
         "area": {
