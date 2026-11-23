@@ -155,3 +155,21 @@ The previews show why: the "straightened" outlines are barely straighter, so on 
 regions (holes, irregular shapes, ragged facet borders) the method mostly falls back to the
 simplified polygon. This tested a method that rarely engaged, not straightening as such. Not
 pursued further for now.
+
+## Learned edge-type output (one seed, west fold): not better yet
+
+An edge-type output (cross-entropy on the edge labels, "no edge" weighted 0.1) trained with the
+orientation model (`s5e_west_s0`):
+
+| west fold | rules: precision / recall | learned: precision / recall |
+|---|---|---|
+| any edge | 0.51 / 0.42 | 0.66 / 0.20 |
+| ridge | 0.43 / 0.33 | 0.32 / 0.14 |
+| eave | 0.53 / 0.43 | 0.48 / 0.31 |
+| rake | 0.46 / 0.30 | 0.39 / 0.01 |
+| hip, valley, perimeter, break | 0.01–0.48 / 0.02–0.24 | never predicted |
+
+It predicts only eaves and ridges (and a few rakes); where it predicts an edge it is more often in
+the right place, but rare types never beat "no edge" at any pixel. Likely better: learn only where
+edges are (edge vs not, a more balanced task) and take each edge's type from the geometric rules,
+which are 84–99% precise on true orientation.
