@@ -160,3 +160,10 @@ def test_repeat_diffs_measure_disagreement_between_two_registrations():
     assert d["constant_m"] == pytest.approx(0.1, abs=1e-6)
     h90 = np.percentile(np.linspace(3, 8, 10), 90)
     assert d["relief_m"] == pytest.approx(0.01 * h90, abs=1e-6)
+
+
+def test_edge_pieces_skip_edges_with_invalid_coordinates():
+    good = SimpleNamespace(id=0, type="eave", p0=np.array([0.0, 0.0, 5.0]), p1=np.array([5.0, 0.0, 5.0]))
+    bad = SimpleNamespace(id=1, type="eave", p0=np.array([0.0, 0.0, 5.0]), p1=np.array([np.nan, 1.0, 5.0]))
+    pieces = edge_pieces([good, bad])
+    assert pieces and all(p.edge_id == 0 for p in pieces)

@@ -111,7 +111,11 @@ def main() -> None:
     rows, pooled = [], []
     for c in cands:
         hid = ids[c.bag_id]
-        row, pieces = process_house(hid, c, pts.pop(hid), all_polys, tile_name, proc / hid, out, args)
+        try:
+            row, pieces = process_house(hid, c, pts.pop(hid), all_polys, tile_name, proc / hid, out, args)
+        except Exception as exc:  # one bad house must not stop the tile; record it and go on
+            row = {"house_id": hid, "status": "error", "failed": [f"{type(exc).__name__}: {exc}"]}
+            pieces = None
         rows.append(row)
         if pieces is not None:
             pooled.append(pieces)

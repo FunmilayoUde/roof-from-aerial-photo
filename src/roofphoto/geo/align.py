@@ -57,6 +57,8 @@ def edge_pieces(edges: list, piece_len_m: float = 1.0, spacing_m: float = 0.04, 
     pieces = []
     for e in edges:
         p0, p1 = np.asarray(e.p0, float), np.asarray(e.p1, float)
+        if not (np.isfinite(p0).all() and np.isfinite(p1).all()):
+            continue  # a degenerate edge in the report (seen on one Heemstede house)
         plan = p1[:2] - p0[:2]
         length = float(np.hypot(*plan))
         usable = length - 2 * trim_m
