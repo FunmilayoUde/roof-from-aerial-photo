@@ -202,3 +202,38 @@ Threshold and thinning check (precision / recall, scored on the west test houses
 best, valleys weakest). They are limited by roof-outline and orientation accuracy; more and more
 varied training data (a second town) is the broadest lever, and the per-type mix can be revisited
 with a validation-based choice.
+
+## Pitch per facet (`scripts/pitch_per_facet.py`)
+
+Per reliable facet: the models' mean predicted pitch over the facet's true outline (so this measures
+pitch, not segmentation), against its LiDAR pitch, area-weighted. Bilthoven by each house's own fold
+(out of fold); Heemstede by all 9 Bilthoven models. Baseline: one constant pitch, 38.6° (the
+area-weighted median of Bilthoven's facets).
+
+| | Bilthoven (1,574 facets) | Heemstede (685 facets) |
+|---|---|---|
+| model error | **8.5°** | **12.2°** |
+| constant baseline error | 13.4° | 13.4° |
+| model bias | −1.4° | −8.5° |
+| slope of predicted vs true | 0.50 | 0.46 |
+
+Mean predicted pitch per band of true pitch:
+
+| true band | Bilthoven true → predicted | Heemstede true → predicted |
+|---|---|---|
+| 0–5° | 0.6 → 15.6 | 0.7 → 12.0 |
+| 5–20° | 14.0 → 21.2 | 14.4 → 16.3 |
+| 20–30° | 26.0 → 29.1 | 27.0 → 22.9 |
+| 30–40° | 34.8 → 33.9 | 34.7 → 26.5 |
+| 40–50° | 45.5 → 38.9 | 45.5 → 31.8 |
+| 50°+ | 54.5 → 41.4 | 53.7 → 35.7 |
+
+- **In Bilthoven pitch per facet works** (8.5° against 13.4° for a constant): the photo carries real
+  pitch information. This closes the handoff's Stage 5 pitch item for the training town.
+- **Strong pull towards typical values** in both towns (slope ~0.5): flat roofs read 12–16°, steep
+  ones too flat.
+- **A town-wide offset in Heemstede**: for equally steep roofs the model reads about 7° lower than in
+  Bilthoven, across every band. That is about appearance, not the roofs: pitch is most likely read
+  from shading, which depends on sun height and roof material, and the two towns' photos were
+  probably flown under different light. In Heemstede the model's pitch is barely better than a
+  constant guess. This offset, more than steeper roofs, explains the −10.7% area underestimate.

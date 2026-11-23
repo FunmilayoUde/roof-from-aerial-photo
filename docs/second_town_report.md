@@ -85,3 +85,12 @@ Stage 2 behaved as in Bilthoven: median shift 0.50 m, pure relief better than a 
    Bilthoven's typical pitch.
 3. A third town flown in a different year (Vught or Oisterwijk, 2024) would test the photo year
    as well.
+
+## Follow-up: pitch per facet
+
+`scripts/pitch_per_facet.py` (details in `docs/stage5_notes.md`). For equally steep roofs (true
+45.5°), the model reads 38.9° in Bilthoven and 31.8° in Heemstede: a ~7° town-wide offset across
+every pitch band, on top of the pull towards typical values seen in both towns. So the
+underestimate is mainly about how the photo looks (shading under different light, roof material),
+not only steeper roofs. Pitch from appearance is the part that transfers worst, which also matters
+for Lagos. Training on both towns is the direct test of whether varied data fixes it.
