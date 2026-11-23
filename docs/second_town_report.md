@@ -94,3 +94,35 @@ every pitch band, on top of the pull towards typical values seen in both towns. 
 underestimate is mainly about how the photo looks (shading under different light, roof material),
 not only steeper roofs. Pitch from appearance is the part that transfers worst, which also matters
 for Lagos. Training on both towns is the direct test of whether varied data fixes it.
+
+## Training on both towns (`scripts/two_town_compare.py`)
+
+Same Stage 4 recipe (rotations, Stage 4's orientation loss), seed 0, with Heemstede's houses added
+to training. Each fold pairs a Bilthoven block with a Heemstede block, so every test house is in an
+area its model never saw: west = Bilthoven 03, 08, 13 + Heemstede 01, 06; centre = 04, 09 + 02, 07;
+east = 05, 10, 15, 20 + 13. Compared with the Bilthoven-only seed-0 model of the same fold, on the
+same houses. Calibrated as in Stage 4 (factor from the other folds' houses).
+
+| median area error | Heemstede (147) | Bilthoven (351) |
+|---|---|---|
+| **two-town model** | **8.0%** | **8.1%** |
+| Bilthoven-only model | 11.0% | 8.5% |
+| footprint baseline (each model's own training houses) | 13.9% | 11.2% |
+| two-town minus baseline (95% interval) | −5.9 (−8.5 to −2.9), 94/147, p = 0.0005 | −3.1 (−4.8 to −1.6), 207/351, p = 0.0005 |
+| two-town minus Bilthoven-only | −3.0 (−5.2 to −0.5), p = 0.05 | −0.4 (−1.6 to +0.6) |
+| bias before calibration, two-town / Bilthoven-only | −6.0% / −17.4% | −4.3% / −6.3% |
+| 90th percentile, two-town / Bilthoven-only | 20.1% / 27.9% | 21.4% / 23.0% |
+
+Pitch per facet on Heemstede (685 facets): error **8.8°** against 13.1° for the Bilthoven-only
+model, bias **−2.7°** against −8.9°. Roofs that are truly 45.5° read 38.9° (as in Bilthoven)
+instead of 30.8°: **the town-wide pitch offset is gone.**
+
+One Bilthoven-only prediction found no roof at all on one Heemstede house; it counts
+as 100% off in the errors and is left out of the calibration factor only.
+
+**What it shows.** The pitch problem was a matter of training variety: photos from one flight taught
+a pitch reading that didn't transfer; photos from two transfer between both, and the home town
+doesn't lose anything. **What it doesn't show:** Heemstede is no longer an unseen town (other parts
+of it were in training), so this proves that local training data closes the gap, not that two towns
+are enough for a third. That needs a third town, never trained on. One seed per fold, but the gains
+are large against the 0.5–1 point seed noise measured in Stage 4.

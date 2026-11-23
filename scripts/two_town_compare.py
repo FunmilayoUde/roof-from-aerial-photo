@@ -42,7 +42,13 @@ def calibrated(per_fold: dict[str, list[dict]]) -> dict[str, np.ndarray]:
     out = {}
     for f, rs in per_fold.items():
         others = [r for g, rr in per_fold.items() if g != f for r in rr]
-        c = float(np.median([float(r["truth_m2"]) / float(r["model_pitch_m2"]) for r in others]))
+        # A house where the model found no roof (area 0) still counts in the error statistics,
+        # as 100% off, but can't give a ratio for the factor.
+        c = float(
+            np.median(
+                [float(r["truth_m2"]) / float(r["model_pitch_m2"]) for r in others if float(r["model_pitch_m2"]) > 0]
+            )
+        )
         out[f] = np.array([float(r["model_pitch_m2"]) for r in rs]) * c
     return out
 
