@@ -29,7 +29,8 @@ LiDAR labels reach 0.84–0.98 precision for every type except breaks, so the pr
 not the rules, limit edge quality. Applied without retraining to a second
 town, the model keeps its segmentation and orientation quality but reads pitch about 7° lower than on
 equally steep roofs in Bilthoven (mean bias −8.5° per facet), which biases area by −10.7%. Adding the second town's houses to training removes the offset
-(8.0% area error there, 8.1% in Bilthoven). We report the negative results and the conclusions we
+(three-seed ensembles: 7.3% area error there and 7.5% in Bilthoven, where it also
+improves on the Bilthoven-only models). We report the negative results and the conclusions we
 withdrew along the way, which in several cases changed the method more than the positive ones.
 
 ---
@@ -659,24 +660,30 @@ equally steep roofs is a difference in appearance, not in geometry. Shading depe
 elevation and roofing material, and is the most plausible carrier of pitch in a vertical
 photograph. We did not have per-frame acquisition times to test this directly.
 
-**Training on both towns.** We retrained with Heemstede's houses added, one model per fold (seed 0),
-pairing each Bilthoven column with a block of Heemstede sub-tiles (west: Bilthoven 03, 08, 13 with
+**Training on both towns.** We retrained with Heemstede's houses added, three seeds per fold, pairing
+each Bilthoven column with a block of Heemstede sub-tiles (west: Bilthoven 03, 08, 13 with
 Heemstede 01, 06; centre: 04, 09 with 02, 07; east: 05, 10, 15, 20 with 13). Every test house is
-still in an area its model never saw. Each two-town model is compared with the Bilthoven-only
-seed-0 model of the same fold on the same houses, both calibrated as in §6.
+still in an area its model never saw. Each two-town ensemble is compared with the Bilthoven-only
+ensemble of the same fold and seeds on the same houses, both calibrated as in §6. In Bilthoven
+the Bilthoven-only ensemble is exactly the model of Table 1; in Heemstede it differs from the
+nine-model ensemble of Table 5 because each fold's three models are used only on that fold's
+Heemstede houses and the calibration comes from the other folds.
 
 | | Heemstede (147) | Bilthoven (351) |
 |---|---|---|
-| two-town model | **8.0%** | **8.1%** |
-| Bilthoven-only model, seed 0 | 11.0% | 8.5% |
-| footprint × k (each model's training houses) | 13.9% | 11.2% |
-| two-town − reference (95% CI); wins, sign test | −5.9 (−8.5 to −2.9); 94/147, p = 0.0009 | −3.1 (−4.8 to −1.6); 207/351, p = 0.0009 |
-| two-town − Bilthoven-only (95% CI); wins, sign test | −3.0 (−5.2 to −0.5); 84/147, p = 0.10 | −0.4 (−1.6 to +0.6); 179/351, p = 0.75 |
-| bias before calibration, two-town / Bilthoven-only | −6.0% / −17.4% | −4.3% / −6.3% |
-| pitch per facet: error / bias (Heemstede) | 8.8° / −2.7° | |
-| same, Bilthoven-only seed 0 | 13.1° / −8.9° | |
+| two-town, 3 seeds | **7.3%** | **7.5%** |
+| Bilthoven-only, 3 seeds | 11.1% | 8.9% |
+| footprint × k (two-town training houses) | 13.9% | 11.2% |
+| two-town − reference (95% CI); wins, sign test | −6.5 (−9.4 to −3.5); 99/147, p < 0.0001 | −3.7 (−5.4 to −2.0); 207/351, p = 0.0009 |
+| **two-town − Bilthoven-only** (95% CI); wins, sign test | **−3.8 (−5.9 to −1.8)**; 95/147, p = 0.0005 | −1.4 (−2.7 to −0.3); 195/351, p = 0.04 |
+| bias before calibration, two-town / Bilthoven-only | −5.0% / −16.3% | −3.9% / −5.5% |
+| single seeds (0, 1, 2), two-town | 8.0, 8.8, 8.3% | 8.1, 8.8, 8.7% |
+| single seeds (0, 1, 2), Bilthoven-only | 11.0, 10.8, 12.1% | 8.5, 9.7, 10.1% |
+| pitch per facet, error / bias: two-town | 8.8° / −3.1° | |
+| same, Bilthoven-only | 12.6° / −8.5° | |
 
-*Table 6. Training on both towns.*
+*Table 6. Training on both towns: three-seed ensembles on both sides. Pitch per facet is the
+three-seed mean over each reliable facet's true outline (685 Heemstede facets).*
 
 ![Figure 10](figures/fig10.png)
 
@@ -689,19 +696,22 @@ fold: the offset is gone and the curve matches Bilthoven's.*
 
 *Figure 11. Median area error with 95% bootstrap intervals for every configuration, per town.*
 
-The pitch offset closes: 40–50° roofs read 38.9° in Heemstede, the same as in Bilthoven, and the
-home town loses nothing (8.1% against 8.5%). This experiment does *not* show that two towns are
-enough to generalise to a third. After it, Heemstede is no longer an unseen town; what it shows
-is that a modest amount of local training data removes the gap. The evidence for the
-area gain over the Bilthoven-only model in Heemstede is moderate, not conclusive: the bootstrap
-interval of the difference in median error excludes zero (−5.2 to −0.5), but the two-town model is
-closer on only 84 of 147 houses (two-sided sign test p = 0.10). The two measures ask different
-questions. The bootstrap concerns the median error, which improves because the large
-underestimates disappear; the sign test counts houses, many of which were already well measured.
-The pitch result is the clearer one (8.8° against 13.1° per facet, with the bias falling from
-−8.9° to −2.7°). The two-town models are single seeds; the 3.0-point gain is several times the
-0.5–1.0 point seed spread measured in §7.2, but a second and third seed would settle it. §7.7
-shows that this comparison is also the one most sensitive to the teacher's settings.
+The pitch offset closes: 40–50° roofs read 38.2° in Heemstede with the two-town models,
+against 31.8° with the Bilthoven-only models of the same folds, close to the 38.9° read in
+Bilthoven. The area gain in Heemstede is clear: −3.8 points (−5.9 to −1.8), the two-town ensemble is
+closer on 95/147 houses (p = 0.0005), and every two-town seed beats every Bilthoven-only seed
+there. The home town does not lose; it gains a little (−1.4 points, −2.7 to −0.3; p = 0.04),
+plausibly because the two-town models simply see more houses. That second effect is small and its
+interval comes close to zero, so we treat it as likely rather than established.
+
+An earlier version of this comparison used one seed per side. It gave the same direction but a
+weaker result in Heemstede (−3.0 points, 84/147 houses, p = 0.10) and no gain in
+Bilthoven (−0.4 points). With three seeds per side, both sides are ensembles, and both
+improve. This is another case where a single run understated a real effect (§8).
+
+This experiment does *not* show that two towns are enough to generalise to a third. After it,
+Heemstede is no longer an unseen town; what it shows is that a modest amount of local training
+data removes the gap.
 
 ### 7.7 Robustness: spatial dependence and teacher settings
 
@@ -720,21 +730,22 @@ test over sub-tiles. With five sub-tiles that test cannot go below p = 0.0625.
 | Table 1: Bilthoven, clean | −5.30 | −7.3 to −1.5 | −7.2 to −1.7 | 9/9 (0.0039) | −7.2 to −2.4 |
 | Table 5: Heemstede, untrained | −2.17 | −5.3 to 1.2 | −5.0 to 1.3 | 5/5 (0.06) | −4.7 to −0.1 |
 | Table 5: Heemstede, untrained, clean | −8.93 | −12.1 to −1.8 | −12.4 to −2.4 | 5/5 (0.06) | −12.9 to −3.4 |
-| Table 6: Heemstede, two-town vs reference | −5.88 | −8.5 to −2.9 | −7.7 to −2.9 | 4/5 (0.38) | −7.5 to −2.0 |
-| Table 6: Heemstede, two-town vs Bilthoven-only | −3.03 | −5.2 to −0.5 | −5.0 to −0.5 | 5/5 (0.06) | −4.4 to −1.2 |
-| Table 6: Bilthoven, two-town vs reference | −3.08 | −4.8 to −1.6 | −4.7 to −1.5 | 7/9 (0.18) | −5.5 to −1.0 |
-| Table 6: Bilthoven, two-town vs Bilthoven-only | −0.41 | −1.6 to 0.6 | −1.5 to 0.7 | 5/9 (1.00) | −1.8 to 0.8 |
+| Table 6: Heemstede, two-town vs reference | −6.55 | −9.4 to −3.5 | −8.7 to −3.6 | 5/5 (0.06) | −8.3 to −3.3 |
+| Table 6: Heemstede, two-town vs Bilthoven-only | −3.76 | −5.9 to −1.8 | −6.0 to −1.9 | 5/5 (0.06) | −5.2 to −2.8 |
+| Table 6: Bilthoven, two-town vs reference | −3.67 | −5.4 to −2.0 | −5.1 to −2.1 | 8/9 (0.04) | −5.1 to −2.2 |
+| Table 6: Bilthoven, two-town vs Bilthoven-only | −1.41 | −2.7 to −0.3 | −2.8 to −0.3 | 8/9 (0.04) | −2.7 to −0.5 |
 
 *Table 7. Difference in median absolute area error (model minus comparison, percentage points)
 with 95% intervals from resampling houses, 250 m blocks and sub-tiles
 (`scripts/block_bootstrap.py`).*
 
 Every interval that excluded zero when resampling houses still excludes it when resampling 250 m
-blocks, and the two borderline upper bounds are unchanged (Table 1: −3.8 to −0.3;
-Heemstede two-town vs Bilthoven-only: −5.0 to −0.5). The Bilthoven result also holds
-at sub-tile level: the model is better on 8/9 sub-tiles (p = 0.04). In Heemstede,
-five sub-tiles are too few for a sub-tile-level test to reach significance, although the
-two-town model wins on all five against the Bilthoven-only model.
+blocks, and the borderline upper bounds barely move (Table 1: −3.8 to −0.3; two-town vs
+Bilthoven-only in Bilthoven: −2.8 to −0.3). The Bilthoven results also hold at sub-tile level: the
+model of Table 1 is better on 8/9 sub-tiles (p = 0.04), and so is the two-town model against the
+Bilthoven-only one (8/9, p = 0.04). In Heemstede, five sub-tiles are too few for a
+sub-tile-level test to reach significance, although the two-town model wins on all five against
+the Bilthoven-only model.
 
 **Teacher settings.** §4.2 showed that a continuous version of the spacing rule would change the
 LiDAR roof area of 66 kept houses by a median of 1.6%. Table 8 re-scores the existing models
@@ -744,18 +755,16 @@ against that alternative truth. Only the truth changes; the models are not retra
 |---|---|---|---|
 | Table 1: Bilthoven | 50 | −2.5 (−4.1 to −0.3) | −2.5 (−4.1 to −0.1) |
 | Table 5: Heemstede, untrained | 16 | −2.2 (−5.3 to 1.2) | −2.1 (−4.5 to 1.4) |
-| Table 6: Heemstede, two-town vs reference | 16 | −5.9 (−8.5 to −2.9) | −5.7 (−8.1 to −2.7) |
-| Table 6: Heemstede, two-town vs Bilthoven-only | 16 | −3.0 (−5.2 to −0.5) | −2.7 (−5.1 to 0.2) |
-| Table 6: Bilthoven, two-town vs reference | 50 | −3.1 (−4.8 to −1.6) | −3.3 (−5.1 to −1.6) |
-| Table 6: Bilthoven, two-town vs Bilthoven-only | 50 | −0.4 (−1.6 to 0.6) | −0.4 (−1.6 to 0.6) |
+| Table 6: Heemstede, two-town vs reference | 16 | −6.5 (−9.4 to −3.5) | −6.7 (−8.9 to −3.4) |
+| Table 6: Heemstede, two-town vs Bilthoven-only | 16 | −3.8 (−5.9 to −1.8) | −3.8 (−5.6 to −2.0) |
+| Table 6: Bilthoven, two-town vs reference | 50 | −3.7 (−5.4 to −2.0) | −3.7 (−5.6 to −2.1) |
+| Table 6: Bilthoven, two-town vs Bilthoven-only | 50 | −1.4 (−2.7 to −0.3) | −1.6 (−3.0 to −0.5) |
 
 *Table 8. Model-versus-comparison differences with the LiDAR truth as used and as the continuous
 spacing rule would give it (`scripts/sigma_sensitivity.py`).*
 
-All conclusions stand except one. The two-town gain over the Bilthoven-only model in Heemstede
-moves from −5.2 to −0.5 to −5.1 to 0.2, so its interval crosses zero. Together with the
-sign test above, this makes the area part of that result suggestive rather than established. The
-pitch part (§7.6) does not depend on it.
+No conclusion changes. Every interval that excludes zero with the LiDAR truth as used also
+excludes it with the alternative truth, and the differences move by at most 0.2 points.
 
 ---
 
@@ -784,10 +793,21 @@ the label into a confident part ("this is roof") and an uncertain part ("this is
 kept the signal that was trustworthy.
 
 **Seeds before stories.** Three conclusions in this project came from single training runs and
-were later withdrawn: the sun-shading hypothesis (§7.3), an apparent 2-point "training noise"
+were later withdrawn, and one real effect was understated by a single run (§7.6). The withdrawn
+ones: the sun-shading hypothesis (§7.3), an apparent 2-point "training noise"
 that actually compared different training sets, and the claim that learned edge bands were too
 thick. In each case the effect was smaller than the seed-to-seed spread. Comparisons between
 training recipes need several seeds per arm [31]; we adopted three as the minimum.
+
+**Seed disagreement as an uncertainty signal.** The three seeds of a fold disagree most where
+they are least accurate, but only for pitch is the signal strong enough to use. Per reliable facet
+in Bilthoven, the spread of the three seeds' pitch has a rank correlation of 0.22 with the
+ensemble's pitch error (95% CI 0.16 to 0.27, resampling houses); the median error rises
+from 5.6° in the third of facets where the seeds agree most to 6.5° and 9.5° in the third
+where they disagree most. For area per house the correlation is 0.11 (0.00 to 0.21), and
+the median error by third is 7.8%, 9.7% and 10.6%
+(`scripts/seed_disagreement.py`). Seed spread could flag facets whose pitch needs checking; it
+says little about an individual house's area.
 
 **Oracles locate bottlenecks.** Applying the edge rules to true orientation (§7.4) showed in one
 evaluation that the rules were not the problem, which saved a round of work on the rules.
@@ -810,7 +830,6 @@ evaluation that the rules were not the problem, which saved a round of work on t
 - **Dataset size.** 351 kept houses in Bilthoven and 147 in Heemstede is small. The quality gates keep about a third
   of candidates, and more sheets would increase the data roughly linearly.
 - **Edges.** Valleys and breaks are close to unusable; breaks need pitch-aware typing.
-- **Single seeds** for the two-town models.
 
 ---
 
@@ -854,18 +873,19 @@ uv run python scripts/stage4_train.py --run s5w_west_geom_s0 --orient-weight 0.2
 uv run python scripts/stage5_edges.py
 uv run python scripts/pitch_per_facet.py
 uv run python scripts/new_town_eval.py --name heemstede 25CN1_01 25CN1_02 25CN1_06 25CN1_07 25CN1_13
-# two-town models, one per fold (west shown; centre: test 04 09 + 25CN1_02 07, val 13;
-# east: test 05 10 15 20 + 25CN1_13, val 13), scored per town
-uv run python scripts/stage4_train.py --run bt_west --orient-loss image \
+# two-town models, 3 seeds per fold (west, seed 1 shown; runs bt_<fold>, bt_<fold>_s1, _s2;
+# centre: test 04 09 + 25CN1_02 07, val 13; east: test 05 10 15 20 + 25CN1_13, val 13)
+uv run python scripts/stage4_train.py --run bt_west_s1 --seed 1 --orient-loss image \
     --extra-tiles 25CN1_01 25CN1_02 25CN1_06 25CN1_07 25CN1_13 \
     --test 32CN1_03 32CN1_08 32CN1_13 25CN1_01 25CN1_06 --val 32CN1_10
-uv run python scripts/stage4_evaluate.py --run bt_west --tiles 32CN1_03 32CN1_08 32CN1_13 --tag bilt
-uv run python scripts/stage4_evaluate.py --run bt_west --tiles 25CN1_01 25CN1_06 --tag heem
-uv run python scripts/stage4_evaluate.py --run cv_west --tiles 25CN1_01 25CN1_06 --tag heem
+uv run python scripts/stage4_evaluate.py --run bt_west_s1 --tiles 32CN1_03 32CN1_08 32CN1_13 --tag bilt
+uv run python scripts/stage4_evaluate.py --run bt_west_s1 --tiles 25CN1_01 25CN1_06 --tag heem
+uv run python scripts/stage4_evaluate.py --run cv_west_s1 --tiles 25CN1_01 25CN1_06 --tag heem  # every cv_ seed
 uv run python scripts/two_town_compare.py
 # robustness (§7.7) and figures
 uv run python scripts/block_bootstrap.py
 uv run python scripts/sigma_sensitivity.py
+uv run python scripts/seed_disagreement.py
 uv run python scripts/paper_figures.py && uv run python scripts/paper_figures.py --numbers
 ```
 
@@ -961,6 +981,7 @@ addresses appear in this paper or its figures.
 | augmentation | dihedral group D4 with octant remapping |
 | area models | image-variant orientation loss, λ_o = 1; 3 seeds per fold |
 | orientation models | roof-variant orientation loss, λ_o = 0.25; 3 seeds per fold |
+| two-town models | as area models, Heemstede houses added; 3 seeds per fold |
 | roof selection | components of p > 0.5 touching BAG outline + 1.5 m |
 | pitch clip | [0°, 70°] |
 | edge tolerance | 3 px (24 cm); min facet for edge derivation 150 px (~1 m²) |

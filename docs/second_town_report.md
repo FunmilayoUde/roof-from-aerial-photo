@@ -101,6 +101,10 @@ for Lagos. Training on both towns is the direct test of whether varied data fixe
 
 ## Training on both towns (`scripts/two_town_compare.py`)
 
+*Superseded:* the table below is the original one-seed comparison. With three seeds per side
+(paper §7.6, Table 6) the two-town ensemble reaches 7.3% in Heemstede and 7.5% in Bilthoven, against
+11.1% and 8.9% for the Bilthoven-only ensembles (p = 0.0005 and 0.042).
+
 Same Stage 4 recipe (rotations, Stage 4's orientation loss), seed 0, with Heemstede's houses added
 to training. Each fold pairs a Bilthoven block with a Heemstede block, so every test house is in an
 area its model never saw: west = Bilthoven 03, 08, 13 + Heemstede 01, 06; centre = 04, 09 + 02, 07;

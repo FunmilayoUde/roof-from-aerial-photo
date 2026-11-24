@@ -1,102 +1,82 @@
-"""Does training on both towns help? Two-town models (bt_<fold>) against the Bilthoven-only models
-(cv_<fold>, seed 0), on the same held-out houses of each fold, per town.
+"""Does training on both towns help? Two-town models (bt_<fold>) against Bilthoven-only models
+(cv_<fold>), same folds and seeds, on the same held-out houses, per town.
 
     uv run python scripts/two_town_compare.py
 
-Both are seed 0 with the Stage 4 recipe; the only difference is Heemstede's training houses. Per
-town: median |area error| and bias (uncalibrated, and calibrated by the other folds' houses as in
-Stage 4), each model against its own footprint baseline, and two-town against Bilthoven-only on
-the same houses. Then pitch per facet on Heemstede, the quantity that moved most between towns.
+Both use the Stage 4 recipe; the only difference is Heemstede's training houses. Main result:
+three-seed ensembles on both sides (seeds 0-2, area averaged per house, then calibrated by the
+other folds' houses as in Stage 4). Also reported: seed 0 alone (the earlier single-seed result)
+and each seed's own median error, to show the spread. Per town: median |area error| and bias,
+each model against its own footprint baseline, and two-town against Bilthoven-only. Then pitch
+per facet on Heemstede, the quantity that moved most between towns, from the three-seed mean.
+Needs per_house_<tag>.csv for every run (stage4_evaluate.py --tiles ... --tag bilt|heem).
 Writes outputs/two_town/summary.json.
 """
 
 from __future__ import annotations
 
-import csv
 import json
 from pathlib import Path
 
 import numpy as np
+import rasterio
 import torch
 
 from roofphoto.baseline import errors
 from roofphoto.models import unet
-from roofphoto.models.dataset import kept_chips
+from roofphoto.models.dataset import kept_chips, load_targets
+from roofphoto.results import HEEMSTEDE_FOLDS, SEEDS, abs_err, two_town_area
 from roofphoto.stats import compare
 
 ROOT = Path(__file__).resolve().parents[1]
-FOLDS = {
-    "west": ["25CN1_01", "25CN1_06"],
-    "centre": ["25CN1_02", "25CN1_07"],
-    "east": ["25CN1_13"],
-}
 
 
-def rows(run: str, tag: str) -> list[dict]:
-    name = "per_house.csv" if not tag else f"per_house_{tag}.csv"
-    return list(csv.DictReader(open(ROOT / "outputs/stage4" / run / name)))
-
-
-def calibrated(per_fold: dict[str, list[dict]]) -> dict[str, np.ndarray]:
-    """Area x factor from the other folds' houses (median LiDAR / model), as in Stage 4."""
-    out = {}
-    for f, rs in per_fold.items():
-        others = [r for g, rr in per_fold.items() if g != f for r in rr]
-        # A house where the model found no roof (area 0) still counts in the error statistics,
-        # as 100% off, but can't give a ratio for the factor.
-        c = float(
-            np.median(
-                [float(r["truth_m2"]) / float(r["model_pitch_m2"]) for r in others if float(r["model_pitch_m2"]) > 0]
-            )
-        )
-        out[f] = np.array([float(r["model_pitch_m2"]) for r in rs]) * c
-    return out
-
-
-def town_summary(per_fold_bt: dict, per_fold_one: dict) -> dict:
-    res = {}
-    for name, per_fold in (("two_town", per_fold_bt), ("bilthoven_only", per_fold_one)):
-        rs = [r for f in FOLDS for r in per_fold[f]]
-        truth = np.array([float(r["truth_m2"]) for r in rs])
-        raw = np.array([float(r["model_pitch_m2"]) for r in rs])
-        cal = np.concatenate([calibrated(per_fold)[f] for f in FOLDS])
-        b1 = np.array([float(r["b1_m2"]) for r in rs])
-        res[name] = {
-            "houses": len(rs),
-            "model_uncalibrated": errors(raw, truth),
-            "model_calibrated": errors(cal, truth),
-            "baseline_b1": errors(b1, truth),
-            "model_cal_vs_baseline": compare(np.abs(cal / truth - 1), np.abs(b1 / truth - 1)),
-            "_cal_err": np.abs(cal / truth - 1),
-            "_ids": [r["house_id"] for r in rs],
+def town_summary(town: str, seeds: tuple[str, ...]) -> dict:
+    d = two_town_area(ROOT, town, seeds)
+    res = {"seeds": len(seeds), "houses": len(d["truth"])}
+    for label in ("two_town", "bilthoven_only"):
+        res[label] = {
+            "model_calibrated": errors(d[label], d["truth"]),
+            "model_uncalibrated": errors(d[f"{label}_raw"], d["truth"]),
+            "baseline_b1": errors(d[f"{label}_b1"], d["truth"]),
+            "model_vs_baseline": compare(abs_err(d[label], d["truth"]), abs_err(d[f"{label}_b1"], d["truth"])),
         }
-    a, b = res["two_town"], res["bilthoven_only"]
-    assert a["_ids"] == b["_ids"], "the two runs must score the same houses in the same order"
-    res["two_town_vs_bilthoven_only"] = compare(a.pop("_cal_err"), b.pop("_cal_err"))
-    a.pop("_ids")
-    b.pop("_ids")
+    res["two_town_vs_bilthoven_only"] = compare(
+        abs_err(d["two_town"], d["truth"]), abs_err(d["bilthoven_only"], d["truth"])
+    )
     return res
 
 
+def per_seed_medians(town: str) -> dict:
+    out = {}
+    for s in SEEDS:
+        d = two_town_area(ROOT, town, (s,))
+        out[f"seed{SEEDS.index(s)}"] = {
+            k: round(100 * float(np.median(abs_err(d[k], d["truth"]))), 2) for k in ("two_town", "bilthoven_only")
+        }
+    return out
+
+
 def pitch_heemstede(device) -> dict:
-    """Area-weighted pitch error and bias per facet on each fold's Heemstede test houses."""
+    """Area-weighted pitch error and bias per facet on each fold's Heemstede test houses, from the
+    mean predicted pitch of the fold's three seeds."""
     out = {}
     for label, prefix in (("two_town", "bt_"), ("bilthoven_only", "cv_")):
         t_all, p_all, w_all = [], [], []
-        for fold, tiles in FOLDS.items():
-            m = unet.build(pretrained=False)
-            m.load_state_dict(torch.load(ROOT / "outputs/stage4" / f"{prefix}{fold}" / "model.pt", map_location="cpu"))
-            m.to(device).eval()
-            import rasterio
-
-            from roofphoto.models.dataset import load_targets
-
+        for fold, tiles in HEEMSTEDE_FOLDS.items():
+            models = []
+            for s in SEEDS:
+                m = unet.build(pretrained=False)
+                weights = ROOT / "outputs/stage4" / f"{prefix}{fold}{s}" / "model.pt"
+                m.load_state_dict(torch.load(weights, map_location="cpu"))
+                models.append(m.to(device).eval())
             for chip in kept_chips(ROOT, tiles):
                 image, _, _, _ = load_targets(chip)
                 with rasterio.open(chip.folder / f"labels_{chip.labels}.tif") as src:
                     band = src.read(1)
+                x = torch.from_numpy(image)[None].to(device)
                 with torch.no_grad():
-                    pitch = unet.split(m(torch.from_numpy(image)[None].to(device)))[1][0].cpu().numpy()
+                    pitch = np.mean([unet.split(m(x))[1][0].cpu().numpy() for m in models], 0)
                 for f in json.loads((chip.folder / "facets.json").read_text()):
                     sel = band == f["class"]
                     if f["ignored_in_labels"] or sel.sum() < 20:
@@ -121,11 +101,10 @@ def main() -> None:
     out_dir = ROOT / "outputs/two_town"
     out_dir.mkdir(parents=True, exist_ok=True)
     result = {
-        "bilthoven": town_summary({f: rows(f"bt_{f}", "bilt") for f in FOLDS}, {f: rows(f"cv_{f}", "") for f in FOLDS}),
-        "heemstede": town_summary(
-            {f: rows(f"bt_{f}", "heem") for f in FOLDS}, {f: rows(f"cv_{f}", "heem") for f in FOLDS}
-        ),
-        "heemstede_pitch_per_facet": pitch_heemstede(device),
+        "three_seeds": {t: town_summary(t, SEEDS) for t in ("heemstede", "bilthoven")},
+        "seed0_only": {t: town_summary(t, ("",)) for t in ("heemstede", "bilthoven")},
+        "per_seed_median_abs_pct": {t: per_seed_medians(t) for t in ("heemstede", "bilthoven")},
+        "heemstede_pitch_per_facet_three_seeds": pitch_heemstede(device),
     }
     (out_dir / "summary.json").write_text(json.dumps(result, indent=2))
     print(json.dumps(result, indent=2))

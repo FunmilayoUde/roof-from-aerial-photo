@@ -33,6 +33,7 @@ from roofphoto.data.chips import EDGE_CLASSES  # noqa: E402
 from roofphoto.data.lookup import footprints  # noqa: E402
 from roofphoto.edges import edge_raster, facets_from_orientation  # noqa: E402
 from roofphoto.io.lidar import labels_from_report  # noqa: E402
+from roofphoto import results  # noqa: E402
 from roofphoto.models import unet  # noqa: E402
 from roofphoto.models.dataset import IGNORE, IMAGENET_MEAN, IMAGENET_STD, N_CLASSES, kept_chips, load_targets  # noqa: E402
 
@@ -115,45 +116,13 @@ def manifest_rows(tiles: list[str]) -> list[dict]:
 
 
 def bilthoven_area() -> dict[str, np.ndarray]:
-    """Per house, the Stage 4 numbers: mean of the fold's three seeds, x the cross-fold factor."""
-    cal = json.loads((S4 / "cv_summary.json").read_text())["calibration"]
-    truth, model, b1, flat, unc, fold_of = [], [], [], [], [], []
-    for fold in FOLDS:
-        runs = [f"cv_{fold}", f"cv_{fold}_s1", f"cv_{fold}_s2"]
-        tables = [{r["house_id"]: r for r in per_house(run)} for run in runs]
-        for hid, r in tables[0].items():
-            truth.append(float(r["truth_m2"]))
-            model.append(
-                np.mean([float(t[hid]["model_pitch_m2"]) for t in tables]) * cal[f"cv_{fold}"]["cross_fold_factor"]
-            )
-            b1.append(float(r["b1_m2"]))
-            flat.append(float(r["flat_share"]))
-            unc.append(float(r["uncertain_share"]))
-            fold_of.append(fold)
-    return {k: np.array(v) for k, v in dict(truth=truth, model=model, b1=b1, flat=flat, unc=unc, fold=fold_of).items()}
+    """Stage 4 final, per house (roofphoto.results): three-seed mean x the cross-fold factor."""
+    return results.bilthoven_area(ROOT)
 
 
 def two_town_area(town: str) -> dict[str, np.ndarray]:
-    """Two-town (bt_) and Bilthoven-only seed-0 (cv_) models on one town, calibrated as in
-    scripts/two_town_compare.py (factor from the other folds' houses)."""
-    tag_bt, tag_one = ("bilt", "") if town == "bilthoven" else ("heem", "heem")
-
-    def name(tag):
-        return "per_house.csv" if not tag else f"per_house_{tag}.csv"
-
-    out = {}
-    for name_, prefix, tag in (("two_town", "bt_", tag_bt), ("bilthoven_only", "cv_", tag_one)):
-        per_fold = {f: per_house(f"{prefix}{f}", name(tag)) for f in FOLDS}
-        cal = []
-        for f, rs in per_fold.items():
-            others = [r for g, rr in per_fold.items() if g != f for r in rr if float(r["model_pitch_m2"]) > 0]
-            c = np.median([float(r["truth_m2"]) / float(r["model_pitch_m2"]) for r in others])
-            cal += [float(r["model_pitch_m2"]) * c for r in rs]
-        rs = [r for f in FOLDS for r in per_fold[f]]
-        out[name_] = np.array(cal)
-        out[f"{name_}_b1"] = np.array([float(r["b1_m2"]) for r in rs])
-        out["truth"] = np.array([float(r["truth_m2"]) for r in rs])
-    return out
+    """Two-town and Bilthoven-only three-seed ensembles on one town (roofphoto.results)."""
+    return results.two_town_area(ROOT, town, results.SEEDS)
 
 
 def abs_err(pred, truth):
@@ -737,13 +706,14 @@ def fig10_pitch() -> None:
     f = list(csv.DictReader(open(ROOT / "outputs/pitch/facets.csv")))
     two = []
     for fold, tiles in HEEM_FOLDS.items():
-        m = load_model(f"bt_{fold}", dev)
+        models = [load_model(f"bt_{fold}{sd}", dev) for sd in results.SEEDS]
         for chip in kept_chips(ROOT, tiles):
             image, _, _, _ = load_targets(chip)
             with rasterio.open(chip.folder / f"labels_{chip.labels}.tif") as src:
                 band = src.read(1)
+            x = torch.from_numpy(image)[None].to(dev)
             with torch.no_grad():
-                p = unet.split(m(torch.from_numpy(image)[None].to(dev)))[1][0].cpu().numpy()
+                p = np.mean([unet.split(m(x))[1][0].cpu().numpy() for m in models], 0)
             for fc in json.loads((chip.folder / "facets.json").read_text()):
                 sel = band == fc["class"]
                 if fc["ignored_in_labels"] or sel.sum() < 20:
@@ -753,7 +723,7 @@ def fig10_pitch() -> None:
     sets = [
         ("(a) Bilthoven, Bilthoven models\n(out of fold)", [r for r in f if r["town"] == "Bilthoven"], MODEL_C),
         ("(b) Heemstede, Bilthoven models\n(unseen town)", [r for r in f if r["town"] == "Heemstede"], BASE_C),
-        ("(c) Heemstede, two-town models\n(out of fold)", None, ALT_C),
+        ("(c) Heemstede, two-town models\n(out of fold, 3 seeds)", None, ALT_C),
     ]
     bands = [0, 5, 20, 30, 40, 50, 90]
     fig, axs = plt.subplots(1, 3, figsize=(10, 3.6), sharey=True)
@@ -792,21 +762,18 @@ def fig11_transfer() -> None:
     nt = list(csv.DictReader(open(ROOT / "outputs/new_town/heemstede/per_house.csv")))
     heem_truth = np.array([float(r["truth_m2"]) for r in nt])
     heem_ens = abs_err(np.array([float(r["model_cal_m2"]) for r in nt]), heem_truth)
-    heem_b1 = abs_err(np.array([float(r["b1_m2"]) for r in nt]), heem_truth)
-    b = bilthoven_area()
     tb, th = two_town_area("bilthoven"), two_town_area("heemstede")
     groups = {
         "Bilthoven": [
-            ("footprint × k", abs_err(b["b1"], b["truth"]), BASE_C),
-            ("Bilthoven-only, 3 seeds", abs_err(b["model"], b["truth"]), MODEL_C),
-            ("Bilthoven-only, seed 0", abs_err(tb["bilthoven_only"], tb["truth"]), "#7fa3d1"),
-            ("two-town, seed 0", abs_err(tb["two_town"], tb["truth"]), ALT_C),
+            ("footprint × k (two-town training)", abs_err(tb["two_town_b1"], tb["truth"]), BASE_C),
+            ("Bilthoven-only, 3 seeds", abs_err(tb["bilthoven_only"], tb["truth"]), MODEL_C),
+            ("two-town, 3 seeds", abs_err(tb["two_town"], tb["truth"]), ALT_C),
         ],
         "Heemstede": [
-            ("footprint × k", heem_b1, BASE_C),
-            ("Bilthoven-only, 9-model ensemble", heem_ens, MODEL_C),
-            ("Bilthoven-only, seed 0", abs_err(th["bilthoven_only"], th["truth"]), "#7fa3d1"),
-            ("two-town, seed 0", abs_err(th["two_town"], th["truth"]), ALT_C),
+            ("footprint × k (two-town training)", abs_err(th["two_town_b1"], th["truth"]), BASE_C),
+            ("Bilthoven-only, all 9 models", heem_ens, "#7fa3d1"),
+            ("Bilthoven-only, 3 seeds per fold", abs_err(th["bilthoven_only"], th["truth"]), MODEL_C),
+            ("two-town, 3 seeds per fold", abs_err(th["two_town"], th["truth"]), ALT_C),
         ],
     }
     fig, axs = plt.subplots(1, 2, figsize=(10, 3.0), sharex=True)
