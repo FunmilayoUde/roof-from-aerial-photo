@@ -204,8 +204,8 @@ def fig1_overview() -> None:
 
 def fig2_relief() -> None:
     """(a) relief displacement geometry, (b) shift field over Bilthoven, (c) ground check."""
-    fig = plt.figure(figsize=(10, 4.1))
-    gs = fig.add_gridspec(1, 3, width_ratios=[1.0, 1.25, 0.9], wspace=0.32)
+    fig = plt.figure(figsize=(10.5, 4.6))
+    gs = fig.add_gridspec(1, 3, width_ratios=[1.0, 1.25, 0.9], wspace=0.45)
 
     ax = fig.add_subplot(gs[0])
     ax.set_xlim(-1, 11)
@@ -214,7 +214,7 @@ def fig2_relief() -> None:
     ax.plot([-1, 11], [0, 0], color="#555", lw=1)
     ax.plot([1, 1], [0, 10], color="#999", lw=0.7, ls=":")
     ax.plot(1, 10, "v", color="#333", ms=8)
-    ax.text(1.3, 10.2, "camera", fontsize=7.5)
+    ax.text(1.7, 10.0, "camera", fontsize=7.5, va="center")
     ax.text(1.0, -0.8, "nadir", ha="center", fontsize=7.5)
     ax.add_patch(plt.Rectangle((6, 0), 1.2, 3.2, fc="#c9b28f", ec="#555", lw=0.8))
     ax.plot([1, 7.2], [10, 3.2], color=MODEL_C, lw=0.9)
@@ -262,8 +262,8 @@ def fig2_relief() -> None:
     ax.set_aspect("equal")
     ax.set_xlabel("km east")
     ax.set_ylabel("km north")
-    ax.legend(loc="upper right", frameon=False)
-    ax.set_title(f"(b) photo − LiDAR shift, {len(xs)} houses (×400)", loc="left")
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=2, frameon=False)
+    ax.set_title(f"(b) photo − LiDAR shift per house\n{len(xs)} houses, arrows ×400", loc="left")
 
     ax = fig.add_subplot(gs[2])
     g = json.loads((ROOT / "outputs/stage1/ground_check_summary.json").read_text())
@@ -276,9 +276,9 @@ def fig2_relief() -> None:
         ax.text(g[n]["roof_shift_size_m"] + 0.03, i + 0.18, f"no-shift wins {w:.0%}", va="center", fontsize=6.8)
     ax.set_yticks(yy, [f"house {i + 1}" for i in range(len(names))])
     ax.set_xlabel("best-fit shift, m")
-    ax.set_xlim(0, 1.75)
-    ax.legend(loc="lower right", frameon=False)
-    ax.set_title("(c) ground check (Delft)", loc="left")
+    ax.set_xlim(0, 2.0)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.45, -0.16), ncol=1, frameon=False)
+    ax.set_title("(c) ground check\n(Delft)", loc="left")
     save(fig, 2)
 
 
@@ -365,7 +365,7 @@ def fig4_labels() -> None:
     with rasterio.open(chip.folder / f"labels_{chip.labels}.tif") as src:
         edges_b, roof_b = src.read(2), src.read(3)
     rgb = rgb_of(image)
-    fig, axs = plt.subplots(1, 4, figsize=(10, 2.85))
+    fig, axs = plt.subplots(1, 4, figsize=(10, 3.4))
     axs[0].imshow(rgb)
     axs[0].set_title("(a) photo chip, 512 px = 41 m", loc="left")
 
@@ -377,7 +377,14 @@ def fig4_labels() -> None:
     axs[1].set_title("(b) facets: flat + 8 directions", loc="left")
     handles = [Patch(color=orient_cmap()(i), label=n) for i, n in enumerate(ORIENT_NAMES)]
     axs[1].legend(
-        handles=handles, ncol=3, fontsize=5.6, loc="lower left", frameon=True, handlelength=1, columnspacing=0.6
+        handles=handles,
+        ncol=5,
+        fontsize=6,
+        loc="upper left",
+        bbox_to_anchor=(0, -0.02),
+        frameon=False,
+        handlelength=1,
+        columnspacing=0.7,
     )
 
     axs[2].imshow(rgb * 0.55)
@@ -388,7 +395,9 @@ def fig4_labels() -> None:
         for k, v in EDGE_CLASSES.items()
         if k != "unclassified" and (edges_b == v).any()
     ]
-    axs[2].legend(handles=hs, fontsize=5.6, loc="lower left", handlelength=1)
+    axs[2].legend(
+        handles=hs, ncol=3, fontsize=6, loc="upper left", bbox_to_anchor=(0, -0.02), frameon=False, handlelength=1
+    )
     axs[2].set_title("(c) typed edges, 3 px wide", loc="left")
 
     axs[3].imshow(rgb * 0.55)
@@ -398,14 +407,18 @@ def fig4_labels() -> None:
     )
     axs[3].legend(
         handles=[Patch(color=MODEL_C, label="roof"), Patch(color="#dddddd", label="ignore (255)")],
+        ncol=2,
         fontsize=6,
-        loc="lower left",
+        loc="upper left",
+        bbox_to_anchor=(0, -0.02),
+        frameon=False,
+        handlelength=1,
     )
     axs[3].set_title("(d) roof extent", loc="left")
     for ax in axs:
         ax.set_axis_off()
-    fig.tight_layout()
-    fig.text(0.01, 0.0, CREDIT, fontsize=6.5, color="#666")
+    fig.tight_layout(w_pad=1.2)
+    fig.text(0.01, -0.06, CREDIT, fontsize=6.5, color="#666")
     save(fig, 4)
 
 
@@ -431,30 +444,36 @@ def fig5_dataset() -> None:
     ax.barh(y, [fo.get(k, 0) for k in keys], color=MODEL_C, label="fails only this check")
     ax.set_yticks(y, [names[k] for k in keys], fontsize=7)
     ax.set_xlabel("houses (of 1,010 Bilthoven candidates)")
-    ax.legend(frameon=False, loc="lower right")
+    ax.legend(frameon=False, loc="upper center", bbox_to_anchor=(0.4, -0.2), ncol=2)
     ax.set_title(f"(a) quality gates: {s['kept']['houses']} kept", loc="left")
 
     ax = axs[1]
     rows = [r for r in manifest_rows(BILT_TILES) if r["status"] == "kept"]
     ratio = np.array([float(r["roof_area_m2"]) / float(r["footprint_m2"]) for r in rows])
-    ax.hist(ratio, bins=np.arange(0.9, 2.4, 0.05), color=GREY)
-    ax.axvline(np.median(ratio), color=BASE_C, lw=1.2)
-    ax.text(np.median(ratio) + 0.03, ax.get_ylim()[1] * 0.9, f"median {np.median(ratio):.2f}", fontsize=7, color=BASE_C)
+    counts, _, _ = ax.hist(ratio, bins=np.arange(0.9, 2.4, 0.05), color=GREY)
+    ax.axvline(np.median(ratio), color=BASE_C, lw=1.2, label=f"median {np.median(ratio):.2f}")
+    ax.set_ylim(0, counts.max() * 1.3)  # headroom for the legend
+    ax.legend(frameon=False, loc="upper right", fontsize=7)
     ax.set_xlabel("LiDAR roof area / BAG footprint")
     ax.set_ylabel("houses")
     ax.set_title("(b) what one factor must cover", loc="left")
 
     ax = axs[2]
     f = list(csv.DictReader(open(ROOT / "outputs/pitch/facets.csv")))
+    top = 0.0
     for town, col in (("Bilthoven", MODEL_C), ("Heemstede", BASE_C)):
         t = np.array([float(r["true_pitch"]) for r in f if r["town"] == town])
         w = np.array([float(r["area_m2"]) for r in f if r["town"] == town])
-        ax.hist(t, bins=np.arange(0, 66, 3), weights=w / w.sum(), histtype="step", lw=1.4, color=col, label=town)
+        h, _, _ = ax.hist(
+            t, bins=np.arange(0, 66, 3), weights=w / w.sum(), histtype="step", lw=1.4, color=col, label=town
+        )
+        top = max(top, h.max())
+    ax.set_ylim(0, top * 1.35)  # headroom for the legend
     ax.set_xlabel("facet pitch (LiDAR), degrees")
     ax.set_ylabel("share of roof area")
-    ax.legend(frameon=False)
+    ax.legend(frameon=False, loc="upper center", ncol=2, fontsize=7)
     ax.set_title("(c) pitch, reliable facets", loc="left")
-    fig.tight_layout()
+    fig.tight_layout(w_pad=1.5)
     save(fig, 5)
 
 
@@ -695,8 +714,9 @@ def fig9_edges() -> None:
         ax.set_ylim(0, 1.05)
         ax.set_title(f"({'a' if metric == 'precision' else 'b'}) {metric}, tolerance 3 px (24 cm)", loc="left")
     axs[0].set_ylabel("share of edge pixels")
-    axs[0].legend(frameon=False, loc="upper right", fontsize=7)
-    fig.tight_layout()
+    handles, labels = axs[0].get_legend_handles_labels()
+    fig.tight_layout(rect=(0, 0, 1, 0.9), w_pad=2)
+    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 1.0), ncol=2, frameon=False, fontsize=8)
     save(fig, 9)
 
 
@@ -752,8 +772,9 @@ def fig10_pitch() -> None:
         ax.set_xlabel("LiDAR pitch, °")
         ax.set_title(title, loc="left")
     axs[0].set_ylabel("predicted pitch (facet mean), °")
-    axs[0].legend(frameon=False, loc="lower right", fontsize=6.8)
-    fig.tight_layout()
+    handles, labels = axs[0].get_legend_handles_labels()
+    fig.tight_layout(w_pad=1.5)
+    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.0), ncol=2, frameon=False, fontsize=8)
     save(fig, 10)
 
 
