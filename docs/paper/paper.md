@@ -1,8 +1,8 @@
 # Roof Geometry from Aerial Orthophotos under Airborne LiDAR Supervision
 
-**Oluwatifunmilayo Ude**
+**Oluwatifunmilayo Ude** · funmichimdi@gmail.com
 
-November 2026 · code and data pipeline: `roof-from-aerial-photo` · companion LiDAR pipeline: `roofrecon`
+November 2026 · code: [github.com/FunmilayoUde/roof-from-aerial-photo](https://github.com/FunmilayoUde/roof-from-aerial-photo) · LiDAR teacher (`roofrecon`): [github.com/FunmilayoUde/roof-measurement-from-lidar](https://github.com/FunmilayoUde/roof-measurement-from-lidar)
 
 ---
 
@@ -23,7 +23,10 @@ cross-validation in Bilthoven (NL), it estimates roof surface area with a median
 of 8.9% against the LiDAR measurement, compared with 11.5% for the standard footprint-times-factor
 method (paired difference −2.5 points, 95% CI −4.1 to −0.3, or −3.8 to −0.3 when
 resampling 250 m spatial blocks; closer on 204 of 351 houses, two-sided sign test p = 0.003).
-The largest gain is on flat roofs. Applied without retraining to a second
+The largest gain is on flat roofs. Roof edges typed by geometric rules from the predicted
+orientation reach 0.53 precision and 0.43 recall within 24 cm; the same rules applied to the
+LiDAR labels reach 0.84–0.98 precision for every type except breaks, so the predictions,
+not the rules, limit edge quality. Applied without retraining to a second
 town, the model keeps its segmentation and orientation quality but reads pitch about 7° lower than on
 equally steep roofs in Bilthoven (mean bias −8.5° per facet), which biases area by −10.7%. Adding the second town's houses to training removes the offset
 (8.0% area error there, 8.1% in Bilthoven). We report the negative results and the conclusions we
@@ -828,7 +831,8 @@ transfers to a town it has never seen.
 
 ## Reproducibility
 
-All code is in the repository; data are public and are downloaded by the scripts. Hardware: Apple
+All code is public under the MIT licence (URLs above); data are public and are downloaded by the
+scripts. Hardware: Apple
 M4, 16 GB, PyTorch with MPS. Every number in this paper is read from files under `outputs/`
 written by the scripts below, and every figure is drawn from those files by
 `scripts/paper_figures.py`.

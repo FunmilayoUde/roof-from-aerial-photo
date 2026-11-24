@@ -1,7 +1,8 @@
 # Roof Measurement from Aerial Photos
 
 Trains a model to measure roofs from aerial photos alone, using the output of the
-[LiDAR roof pipeline](https://roof-measurement-lidar.netlify.app/) (`roofrecon`, in the sibling
+[LiDAR roof pipeline](https://github.com/FunmilayoUde/roof-measurement-from-lidar)
+([write-up](https://roof-measurement-lidar.netlify.app/); `roofrecon`, expected in the sibling
 folder `../3D reconstruction `) as training labels. See [HANDOFF.md](HANDOFF.md) for the plan and
 the paper, **[docs/paper/paper.md](docs/paper/paper.md)** ([PDF](docs/paper/paper.pdf)), for the
 method, results, ablations and limitations.
