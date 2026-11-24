@@ -54,7 +54,7 @@ from roofphoto.data.quality import (  # noqa: E402
 )
 from roofphoto.data.teacher import READ_MARGIN_M, run_teacher  # noqa: E402
 from roofphoto.geo.register import register_house  # noqa: E402
-from roofphoto.io.lidar import labels_from_report, lidar_root, read_points_multi  # noqa: E402
+from roofphoto.io.lidar import labels_from_report, read_points_multi  # noqa: E402
 from roofphoto.io.pdok import ATTRIBUTION, fetch_ortho, write_geotiff  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,7 +63,7 @@ HEIGHT_BINS = [0, 4, 6, 8, 99]  # m above ground, for pooling residuals by heigh
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--tile", type=Path, default=lidar_root() / "data" / "raw" / "AHN5_(withheld).LAZ")
+    ap.add_argument("--tile", type=Path, required=True, help="AHN sub-tile .LAZ to process")
     ap.add_argument("--layer", default="2023_orthoHR")
     ap.add_argument("--res", type=float, default=0.08)
     ap.add_argument("--chip-m", type=float, default=40.96, help="chip side, m (512 px at 8 cm)")

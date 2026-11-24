@@ -77,3 +77,8 @@ data/, outputs/    not in git; rebuilt by the scripts
 
 - Aerial photos: [PDOK Luchtfoto RGB](https://www.pdok.nl/) (Beeldmateriaal Nederland), CC-BY 4.0.
 - LiDAR labels: derived from [AHN](https://www.ahn.nl/) (AHN5 via the official [dataroom](https://www.ahn.nl/dataroom) sheet index), CC0, and BAG building outlines via PDOK, CC0.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Data: AHN and BAG are CC0; PDOK aerial photographs are CC-BY 4.0
+(Beeldmateriaal Nederland).
