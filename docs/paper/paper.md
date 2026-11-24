@@ -22,7 +22,7 @@ predicts roof extent, pitch and facing direction per pixel. Under spatially bloc
 cross-validation in Bilthoven (NL), it estimates roof surface area with a median absolute error
 of 8.9% against the LiDAR measurement, compared with 11.5% for the standard footprint-times-factor
 method (paired difference −2.5 points, 95% CI −4.1 to −0.3; closer on 204 of 351 houses,
-p = 0.001). The largest gains are on flat and mixed roofs. Applied without retraining to a second
+two-sided sign test p = 0.003). The largest gains are on flat and mixed roofs. Applied without retraining to a second
 town, the model keeps its segmentation and orientation quality but reads pitch about 7° too low,
 which biases area by −10.7%. Adding the second town's houses to training removes the offset
 (8.0% area error there, 8.1% in Bilthoven). We report the negative results and the conclusions we
@@ -401,7 +401,10 @@ contributes to its own correction. The factors are 1.05, 1.08 and 1.05.
 **Metrics and statistics.** The primary metric is the median absolute percentage error of roof
 surface area against the LiDAR measurement. For model-versus-reference comparisons we report the
 difference in median absolute error with a 95% paired bootstrap interval [21] over houses
-(5,000 resamples), and a one-sided sign test on per-house wins. We also report the 90th
+(5,000 resamples), and an exact two-sided sign test on per-house wins (the number of houses on
+which the model's absolute error is smaller, against Binomial(n, ½)). We use the two-sided test
+throughout, although the hypothesis that the model is better was stated in advance, so that the
+reported values are the conservative ones; the one-sided values are half as large. We also report the 90th
 percentile, the share of houses within 10%, and the median signed error (bias). The *clean*
 subset contains the 159 houses with at most 10% of their roof in ignored facets, where the LiDAR
 truth is most reliable.
@@ -424,7 +427,7 @@ truth is most reliable.
 *Table 1. Roof surface area, out-of-fold, three seeds per fold, cross-fold calibration.*
 
 The model's median error is 2.5 points lower (95% CI −4.1 to −0.3), it is closer on 204 of 351
-houses (one-sided sign test p = 0.001), and it is ahead in each of the three held-out areas,
+houses (two-sided sign test p = 0.0027), and it is ahead in each of the three held-out areas,
 narrowly in the east, where the footprint factor fits best. On the clean houses the gap widens
 to 5.3 points (−7.3 to −1.5).
 
@@ -463,7 +466,7 @@ uncertainty is correlated with appearance.
 **Ensembling and calibration.** Single seeds pooled over all houses score 9.4%, 9.8% and 10.0%;
 within a fold, seeds differ by 0.5–1.0 points. The uncalibrated three-seed ensemble scores 9.2%
 with a bias of −5.5%, and its advantage over the reference is not significant (−2.3, CI −4.2 to
-+0.1; 186/351, p = 0.14). Cross-fold calibration removes the bias and makes the difference
++0.1; 186/351, p = 0.29). Cross-fold calibration removes the bias and makes the difference
 significant. We first tried calibrating each fold on its own validation sub-tile (24–30 houses).
 The factors came out at 1.10–1.12, larger than the true underestimate, and flipped the bias to
 +3.8%; we rejected that scheme in favour of the cross-fold one, which uses about ten times as
@@ -594,7 +597,7 @@ Bilthoven's $k$ (1.454).
 |---|---|---|
 | model median area error | 11.8% | 8.9% |
 | footprint × k | 14.0% | 11.5% |
-| model − reference (95% CI) | −2.2 (−5.3 to +1.2) | −2.5 (−4.1 to −0.3) |
+| model − reference (95% CI); wins, sign test | −2.2 (−5.3 to +1.2); 76/147, p = 0.74 | −2.5 (−4.1 to −0.3); 204/351, p = 0.0027 |
 | model median bias | **−10.7%** | +0.4% |
 | roof IoU | 0.837 | 0.82–0.84 |
 | orientation accuracy (ensemble) | 71% | 71% |
@@ -624,8 +627,8 @@ seed-0 model of the same fold on the same houses, both calibrated as in §6.
 | two-town model | **8.0%** | **8.1%** |
 | Bilthoven-only model, seed 0 | 11.0% | 8.5% |
 | footprint × k (each model's training houses) | 13.9% | 11.2% |
-| two-town − reference (95% CI), sign test | −5.9 (−8.5 to −2.9), 94/147, p = 0.0005 | −3.1 (−4.8 to −1.6), 207/351, p = 0.0005 |
-| two-town − Bilthoven-only (95% CI) | −3.0 (−5.2 to −0.5), p = 0.05 | −0.4 (−1.6 to +0.6) |
+| two-town − reference (95% CI); wins, sign test | −5.9 (−8.5 to −2.9); 94/147, p = 0.0009 | −3.1 (−4.8 to −1.6); 207/351, p = 0.0009 |
+| two-town − Bilthoven-only (95% CI); wins, sign test | −3.0 (−5.2 to −0.5); 84/147, p = 0.10 | −0.4 (−1.6 to +0.6); 179/351, p = 0.75 |
 | bias before calibration, two-town / Bilthoven-only | −6.0% / −17.4% | −4.3% / −6.3% |
 | pitch per facet: error / bias (Heemstede) | 8.8° / −2.7° | |
 | same, Bilthoven-only seed 0 | 13.1° / −8.9° | |
@@ -646,9 +649,15 @@ fold: the offset is gone and the curve matches Bilthoven's.*
 The pitch offset closes: 40–50° roofs read 38.9° in Heemstede, the same as in Bilthoven, and the
 home town loses nothing (8.1% against 8.5%). This experiment does *not* show that two towns are
 enough to generalise to a third. After it, Heemstede is no longer an unseen town; what it shows
-is that a modest amount of local training data removes the gap. The two-town models are single
-seeds, but the Heemstede gain (3.0 points) is several times the 0.5–1.0 point seed spread
-measured in §7.2.
+is that a modest amount of local training data removes the gap. The evidence for the
+area gain over the Bilthoven-only model in Heemstede is moderate, not conclusive: the bootstrap
+interval of the difference in median error excludes zero (−5.2 to −0.5), but the two-town model is
+closer on only 84 of 147 houses (two-sided sign test p = 0.10). The two measures ask different
+questions. The bootstrap concerns the median error, which improves because the large
+underestimates disappear; the sign test counts houses, many of which were already well measured.
+The pitch result is the clearer one (8.8° against 13.1° per facet, with the bias falling from
+−8.9° to −2.7°). The two-town models are single seeds; the 3.0-point gain is several times the
+0.5–1.0 point seed spread measured in §7.2, but a second and third seed would settle it.
 
 ---
 
@@ -842,7 +851,7 @@ addresses appear in this paper or its figures.
 | roof selection | components of p > 0.5 touching BAG outline + 1.5 m |
 | pitch clip | [0°, 70°] |
 | edge tolerance | 3 px (24 cm); min facet for edge derivation 150 px (~1 m²) |
-| statistics | paired bootstrap, 5,000 resamples; one-sided sign test |
+| statistics | paired bootstrap, 5,000 resamples; exact two-sided sign test |
 
 ## Appendix B. Negative results and withdrawn conclusions
 

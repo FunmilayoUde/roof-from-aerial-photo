@@ -38,6 +38,10 @@ Stage 2 behaved as in Bilthoven: median shift 0.50 m, pure relief better than a 
 
 ## Results
 
+Sign-test p-values in this report are one-sided (model closer more often). The paper
+(`docs/paper/paper.md`) reports two-sided values: 0.74 for 76/147, 0.0009 for 94/147 and 207/351,
+0.10 for 84/147.
+
 | | Heemstede (147) | Bilthoven (351, Stage 4) |
 |---|---|---|
 | model median area error | **11.8%** | 8.9% |

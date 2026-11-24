@@ -65,7 +65,7 @@ predicts roof extent, pitch and facing direction per pixel. Under spatially bloc
 cross-validation in Bilthoven (NL), it estimates roof surface area with a median absolute error
 of 8.9% against the LiDAR measurement, compared with 11.5% for the standard footprint-times-factor
 method (paired difference −2.5 points, 95% CI −4.1 to −0.3; closer on 204 of 351 houses,
-p = 0.001). The largest gains are on flat and mixed roofs. Applied without retraining to a second
+two-sided sign test p = 0.003). The largest gains are on flat and mixed roofs. Applied without retraining to a second
 town, the model keeps its segmentation and orientation quality but reads pitch about 7° too low,
 which biases area by −10.7%. Adding the second town's houses to training removes the offset
 (8.0% area error there, 8.1% in Bilthoven). We report the negative results and the conclusions we
@@ -439,7 +439,10 @@ contributes to its own correction. The factors are 1.05, 1.08 and 1.05.</p>
 <p><strong>Metrics and statistics.</strong> The primary metric is the median absolute percentage error of roof
 surface area against the LiDAR measurement. For model-versus-reference comparisons we report the
 difference in median absolute error with a 95% paired bootstrap interval [21] over houses
-(5,000 resamples), and a one-sided sign test on per-house wins. We also report the 90th
+(5,000 resamples), and an exact two-sided sign test on per-house wins (the number of houses on
+which the model's absolute error is smaller, against Binomial(n, ½)). We use the two-sided test
+throughout, although the hypothesis that the model is better was stated in advance, so that the
+reported values are the conservative ones; the one-sided values are half as large. We also report the 90th
 percentile, the share of houses within 10%, and the median signed error (bias). The <em>clean</em>
 subset contains the 159 houses with at most 10% of their roof in ignored facets, where the LiDAR
 truth is most reliable.</p>
@@ -489,7 +492,7 @@ truth is most reliable.</p>
 </table></div>
 <p class="caption"><em>Table 1. Roof surface area, out-of-fold, three seeds per fold, cross-fold calibration.</em></p>
 <p>The model's median error is 2.5 points lower (95% CI −4.1 to −0.3), it is closer on 204 of 351
-houses (one-sided sign test p = 0.001), and it is ahead in each of the three held-out areas,
+houses (two-sided sign test p = 0.0027), and it is ahead in each of the three held-out areas,
 narrowly in the east, where the footprint factor fits best. On the clean houses the gap widens
 to 5.3 points (−7.3 to −1.5).</p>
 <p><img alt="Figure 6" src="figures/fig6.png" /></p>
@@ -520,7 +523,7 @@ uncertainty is correlated with appearance.</p>
 <p><strong>Ensembling and calibration.</strong> Single seeds pooled over all houses score 9.4%, 9.8% and 10.0%;
 within a fold, seeds differ by 0.5–1.0 points. The uncalibrated three-seed ensemble scores 9.2%
 with a bias of −5.5%, and its advantage over the reference is not significant (−2.3, CI −4.2 to
-+0.1; 186/351, p = 0.14). Cross-fold calibration removes the bias and makes the difference
++0.1; 186/351, p = 0.29). Cross-fold calibration removes the bias and makes the difference
 significant. We first tried calibrating each fold on its own validation sub-tile (24–30 houses).
 The factors came out at 1.10–1.12, larger than the true underestimate, and flipped the bias to
 +3.8%; we rejected that scheme in favour of the cross-fold one, which uses about ten times as
@@ -731,9 +734,9 @@ Bilthoven's $k$ (1.454).</p>
 <td>11.5%</td>
 </tr>
 <tr>
-<td>model − reference (95% CI)</td>
-<td>−2.2 (−5.3 to +1.2)</td>
-<td>−2.5 (−4.1 to −0.3)</td>
+<td>model − reference (95% CI); wins, sign test</td>
+<td>−2.2 (−5.3 to +1.2); 76/147, p = 0.74</td>
+<td>−2.5 (−4.1 to −0.3); 204/351, p = 0.0027</td>
 </tr>
 <tr>
 <td>model median bias</td>
@@ -802,14 +805,14 @@ seed-0 model of the same fold on the same houses, both calibrated as in §6.</p>
 <td>11.2%</td>
 </tr>
 <tr>
-<td>two-town − reference (95% CI), sign test</td>
-<td>−5.9 (−8.5 to −2.9), 94/147, p = 0.0005</td>
-<td>−3.1 (−4.8 to −1.6), 207/351, p = 0.0005</td>
+<td>two-town − reference (95% CI); wins, sign test</td>
+<td>−5.9 (−8.5 to −2.9); 94/147, p = 0.0009</td>
+<td>−3.1 (−4.8 to −1.6); 207/351, p = 0.0009</td>
 </tr>
 <tr>
-<td>two-town − Bilthoven-only (95% CI)</td>
-<td>−3.0 (−5.2 to −0.5), p = 0.05</td>
-<td>−0.4 (−1.6 to +0.6)</td>
+<td>two-town − Bilthoven-only (95% CI); wins, sign test</td>
+<td>−3.0 (−5.2 to −0.5); 84/147, p = 0.10</td>
+<td>−0.4 (−1.6 to +0.6); 179/351, p = 0.75</td>
 </tr>
 <tr>
 <td>bias before calibration, two-town / Bilthoven-only</td>
@@ -839,9 +842,15 @@ fold: the offset is gone and the curve matches Bilthoven's.</em></p>
 <p>The pitch offset closes: 40–50° roofs read 38.9° in Heemstede, the same as in Bilthoven, and the
 home town loses nothing (8.1% against 8.5%). This experiment does <em>not</em> show that two towns are
 enough to generalise to a third. After it, Heemstede is no longer an unseen town; what it shows
-is that a modest amount of local training data removes the gap. The two-town models are single
-seeds, but the Heemstede gain (3.0 points) is several times the 0.5–1.0 point seed spread
-measured in §7.2.</p>
+is that a modest amount of local training data removes the gap. The evidence for the
+area gain over the Bilthoven-only model in Heemstede is moderate, not conclusive: the bootstrap
+interval of the difference in median error excludes zero (−5.2 to −0.5), but the two-town model is
+closer on only 84 of 147 houses (two-sided sign test p = 0.10). The two measures ask different
+questions. The bootstrap concerns the median error, which improves because the large
+underestimates disappear; the sign test counts houses, many of which were already well measured.
+The pitch result is the clearer one (8.8° against 13.1° per facet, with the bias falling from
+−8.9° to −2.7°). The two-town models are single seeds; the 3.0-point gain is several times the
+0.5–1.0 point seed spread measured in §7.2, but a second and third seed would settle it.</p>
 <hr />
 <h2 id="8-discussion">8. Discussion</h2>
 <p><strong>What the photograph carries.</strong> Extent, facing direction and the positions of roof edges are
@@ -1030,7 +1039,7 @@ addresses appear in this paper or its figures.</p>
 </tr>
 <tr>
 <td>statistics</td>
-<td>paired bootstrap, 5,000 resamples; one-sided sign test</td>
+<td>paired bootstrap, 5,000 resamples; exact two-sided sign test</td>
 </tr>
 </tbody>
 </table></div>
