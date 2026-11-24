@@ -47,8 +47,8 @@ by one strip, with 4–7 cm of scatter around the plane.
   scaled by the same factor. The plane threshold (sensor noise) and the 1 m snap distance
   (geometry) stay as they are.
 
-1.8 is the middle of the range that worked in a sweep on 60 houses. It was then confirmed on 60
-other houses not used to choose it:
+1.8 scored best in a sweep on 60 houses (table below; 1.6–2.1 all within 0.4 points of it). It
+was then confirmed on 60 other houses not used to choose it:
 
 | 60 held-out houses | original settings | adapted |
 |---|---|---|

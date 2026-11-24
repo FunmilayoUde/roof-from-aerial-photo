@@ -31,6 +31,39 @@ def compare(model_err: np.ndarray, base_err: np.ndarray, n_boot: int = 5000, see
     }
 
 
+def compare_blocked(
+    model_err: np.ndarray, base_err: np.ndarray, blocks: np.ndarray, n_boot: int = 5000, seed: int = 0
+) -> dict:
+    """compare(), with the bootstrap resampling whole blocks (e.g. sub-tiles) instead of houses.
+
+    Houses in one block share builders, eras and imaging conditions, so their errors are not
+    independent; a house-level bootstrap then understates the uncertainty. Each replicate draws
+    as many blocks as there are, with replacement, and pools their houses. With few blocks (5-9
+    here) the percentile interval is itself approximate. Also returns how many blocks the model
+    wins on (median error lower than the reference's within the block).
+    """
+    rng = np.random.default_rng(seed)
+    model_err, base_err, blocks = np.asarray(model_err), np.asarray(base_err), np.asarray(blocks)
+    names = np.unique(blocks)
+    members = [np.flatnonzero(blocks == b) for b in names]
+    diffs = []
+    for _ in range(n_boot):
+        i = np.concatenate([members[j] for j in rng.integers(0, len(names), len(names))])
+        diffs.append(np.median(model_err[i]) - np.median(base_err[i]))
+    lo, hi = np.percentile(diffs, [2.5, 97.5])
+    wins = sum(int(np.median(model_err[m]) < np.median(base_err[m])) for m in members)
+    # With few blocks the percentile interval tends to be too narrow (every replicate mixes the
+    # same few blocks); the exact sign test over blocks is the conservative check.
+    return {
+        "median_diff_pts": round(100 * float(np.median(model_err) - np.median(base_err)), 2),
+        "ci95_pts": [round(100 * float(lo), 2), round(100 * float(hi), 2)],
+        "blocks": len(names),
+        "block_sizes": [len(m) for m in members],
+        "model_better_blocks": f"{wins}/{len(names)}",
+        "block_sign_test_p_two_sided": round(sign_test_two_sided(wins, len(names)), 4),
+    }
+
+
 def sign_test_one_sided(wins: int, n: int) -> float:
     """P(at least `wins` successes in n fair coin flips)."""
     return sum(comb(n, k) for k in range(wins, n + 1)) / 2**n

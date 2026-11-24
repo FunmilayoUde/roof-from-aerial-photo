@@ -12,7 +12,7 @@ Airborne LiDAR measures roof geometry well but covers a small part of the world.
 covers almost all of it. We study whether a convolutional network can learn to measure roofs from
 8 cm orthophotos when its only supervision is the output of a LiDAR roof-reconstruction pipeline,
 with no manual annotation. Three problems stand between the LiDAR measurements and usable image
-labels, and we address each one. Relief displacement shifts roofs by 0.2–1.0 m relative to the
+labels, and we address each one. Relief displacement shifts roofs by 0.2–0.8 m (10th–90th percentile) relative to the
 LiDAR; we establish this with a ground-level test and correct it per house with a one-parameter
 relief model, fitted by edge registration. Registration turns out to depend on the JPEG encoding
 of each image request, so we register every house on two renderings and keep only houses whose
@@ -21,10 +21,11 @@ neighbourhood radii to the measured point spacing. A U-Net trained on the result
 predicts roof extent, pitch and facing direction per pixel. Under spatially blocked
 cross-validation in Bilthoven (NL), it estimates roof surface area with a median absolute error
 of 8.9% against the LiDAR measurement, compared with 11.5% for the standard footprint-times-factor
-method (paired difference −2.5 points, 95% CI −4.1 to −0.3; closer on 204 of 351 houses,
-two-sided sign test p = 0.003). The largest gains are on flat and mixed roofs. Applied without retraining to a second
-town, the model keeps its segmentation and orientation quality but reads pitch about 7° too low,
-which biases area by −10.7%. Adding the second town's houses to training removes the offset
+method (paired difference −2.5 points, 95% CI −4.1 to −0.3, or −3.8 to −0.3 when
+resampling 250 m spatial blocks; closer on 204 of 351 houses, two-sided sign test p = 0.003).
+The largest gain is on flat roofs. Applied without retraining to a second
+town, the model keeps its segmentation and orientation quality but reads pitch about 7° lower than on
+equally steep roofs in Bilthoven (mean bias −8.5° per facet), which biases area by −10.7%. Adding the second town's houses to training removes the offset
 (8.0% area error there, 8.1% in Bilthoven). We report the negative results and the conclusions we
 withdrew along the way, which in several cases changed the method more than the positive ones.
 
@@ -57,8 +58,9 @@ We make the following contributions.
 2. **A density adaptation of the teacher.** A pipeline tuned at 25–50 points/m² fragments roof
    planes at 15 points/m²; scaling its radii to the measured point spacing raises plane coverage
    from 0.53 to 0.96 without changing its output at the original density (§4.2).
-3. **A spatially honest evaluation** of a photo-only area estimator against the strongest simple
-   reference, with ensembles, cross-fold calibration and paired statistics (§6–7). The model wins
+3. **A spatially blocked evaluation** of a photo-only area estimator against the standard
+   non-imaging estimate, building footprint × a fitted factor (§6), with ensembles, cross-fold
+   calibration, paired statistics and a spatial block bootstrap (§7). The model wins
    by 2.5 points overall and by 24 points on mostly flat roofs.
 4. **A transfer study** showing which outputs carry to a new town and which do not: extent and
    orientation transfer; pitch, and through it area, does not, until the new town is in training
@@ -72,7 +74,7 @@ We make the following contributions.
 ## 2. Related work
 
 **Building and roof extraction from imagery.** Pixel-wise building segmentation from aerial
-images is a mature problem [11, 9, 10]. The Inria benchmark [9] was designed specifically to test
+images is a mature problem [9–11]. The Inria benchmark [9] was designed specifically to test
 whether models trained in some cities generalise to others, and found substantial drops, which
 motivates our transfer experiment. Kaiser et al. [29] trained on building outlines from
 OpenStreetMap, accepting label noise in exchange for scale; our labels are noisier in different
@@ -85,6 +87,12 @@ Conv-MPN [14], the primitive-detection approach of Nauata and Furukawa [13], and
 are trained on manually annotated roof graphs. We predict dense per-pixel quantities instead and
 derive edges geometrically, a simpler pipeline that lets us measure separately how much error
 comes from the dense predictions and how much from the derivation (§7.4).
+
+We do not compare directly with DeepRoof or the graph-reconstruction methods. They were
+developed for satellite imagery at coarser resolution and trained on manually annotated roofs;
+retraining them on our LiDAR-derived labels and 8 cm orthophotos was beyond the scope of this
+study, and running them unchanged would mostly measure the domain shift. The footprint-factor
+reference needs no image training data at all, which makes it a fair floor for any image method.
 
 **Height from a single image.** Monocular height regression from aerial images [16, 17] is the
 general form of our pitch problem. Christie et al. [18] model the apparent lean of tall objects
@@ -154,7 +162,8 @@ fallback, or that are under 10 m², are marked low-confidence.
 
 The teacher's spatial radii were tuned on Delft (25–50 pts/m²). In Bilthoven (~15 pts/m²) only
 63 of the first 1,010 houses passed the quality gates. The median share of roof points assigned
-to a plane was 0.53, and the footprint consistency check was off by 94%. Every failing house we
+to a plane was 0.53, and the roof area implied by the BAG outline exceeded the reconstructed
+roof area by a median of 94%, because most roof planes had been discarded. Every failing house we
 inspected was covered by a single flight strip, with 4–7 cm scatter about the fitted plane, which
 rules out strip misalignment. The cause was the fixed 0.3 m connectivity radius. At this density
 the distance from a point to its fourth-nearest neighbour is about 0.29 m, so the connectivity
@@ -165,18 +174,32 @@ every spacing-dependent radius $\rho_j$ (connectivity, adjacency, line band, alp
 radius) by
 
 $$
-\sigma = \begin{cases} 1 & \delta_4 \le 0.22\ \text{m} \\ \max\!\left(1,\ \dfrac{1.8\,\delta_4}{0.3\ \text{m}}\right) & \text{otherwise,} \end{cases}
+\sigma = \begin{cases} 1 & \delta_4 \le 0.22\ \text{m} \\ \dfrac{1.8\,\delta_4}{0.3\ \text{m}} & \delta_4 > 0.22\ \text{m,} \end{cases}
 \qquad \rho_j \leftarrow \sigma\,\rho_j .
 $$
 
-The factor 1.8 is the centre of the range (1.6–2.1) that worked in a sweep on 60 houses. On a
-disjoint set of 60 houses, plane coverage rose to 0.957 and the footprint check error fell to
-3.9%. Below 0.22 m spacing the original settings apply unchanged, and a regression test confirms
-that the four Delft reports are reproduced exactly.
+In a sweep over 1.4, 1.6, 1.8, 2.1 and 2.5 on 60 houses, 1.8 gave the lowest median footprint
+check error (3.5%) and the most houses passing all teacher checks (21 of 60); 1.6 and 2.1 were
+within 0.4 points. On a disjoint set of 60 houses, plane coverage rose to 0.957 and the footprint
+check error fell to 3.9%. Up to 0.22 m spacing the original settings apply unchanged, and a
+regression test confirms that the four Delft reports, the sparsest at 0.216 m, are reproduced
+exactly.
+
+The rule has a deliberate step at 0.22 m: just below it the connectivity radius is 0.3 m, about
+1.36 δ₄; just above, 1.8 δ₄. It keeps the validated settings across the whole density range
+they were validated on. The step falls in a gap in the data: point spacing is bimodal, with
+houses in flight-strip overlaps at 0.17–0.22 m and the rest mostly at 0.28–0.32 m, and only 12
+of 1,528 candidate houses lie between 0.22 and 0.25 m. The continuous alternative,
+radius = max(0.3 m, 1.8 δ₄), differs only for δ₄ in (0.167, 0.22] m. Re-running the teacher with
+it on all 258 houses in that range raises their median plane coverage from 0.918 to 0.938. For the
+66 of them that were kept, the LiDAR roof area changes by a median of 1.6% (90th percentile
+4.2%). §7.7 shows the effect of that change on the results.
 
 ### 4.3 The misalignment is relief displacement
 
-LiDAR roof outlines sit 0.45–1.0 m (6–12 px) from the roofs in the orthophoto. Two explanations
+On the four Delft development houses, LiDAR roof outlines sit 0.45–1.0 m (6–12 px) from the roofs
+in the orthophoto; over the kept Bilthoven houses the registered shift is 0.21–0.82 m
+(10th–90th percentile, median 0.46 m). Two explanations
 predict this: a georeferencing error in the photo, or relief displacement. An orthophoto is
 rectified to a terrain model, so a point at height $h$ above the ground, at horizontal distance
 $r$ from the camera nadir, is displaced radially by
@@ -301,9 +324,9 @@ the Delft houses and the teacher's error table before any model was trained.
 | shift repeats across renderings | ≤ 0.15 m | 27 |
 
 Of 1,010 Bilthoven candidates, 351 were kept (83,100 m² of roof, 3,015 facets); 60 more were too
-large for a chip and 10 failed in the teacher (Figure 5a). Earlier, houses with any uncertain
-facet were dropped outright; this removed 25% of usable houses and biased the set towards simple
-roofs. Replacing that rule with per-facet ignore masks kept 105 more houses. In the median kept
+large for a chip and 10 failed in the teacher (Figure 5a). An earlier version dropped every
+house with more than a quarter of its roof area in uncertain facets, which excluded mainly complex
+roofs. Raising that limit to half, and masking the uncertain facets instead, kept 105 more houses. In the median kept
 house, 13% of the roof area is in ignored facets.
 
 ![Figure 5](figures/fig5.png)
@@ -386,8 +409,8 @@ its 1–3 km² neighbourhood.
 **Reference method.** Footprint × $k$, with $k$ the median roof-to-footprint ratio on the same
 training houses as the model (about 1.45). A per-construction-era factor scored 10.7% against
 11.4% in leave-one-sub-tile-out and was not worth the extra parameters; the footprint alone
-scores 31.2%. Leave-one-sub-tile-out also showed that the three eastern sub-tiles are the easiest
-(8.0–9.4%), so any single held-out area can flatter a method.
+scores 31.2%. Leave-one-sub-tile-out also showed that sub-tiles 10, 15 and 20, three of the four in the east
+fold, are the three easiest (8.0–9.4%), so any single held-out area can flatter a method.
 
 **Calibration.** Fold $F$'s area factor is
 
@@ -396,7 +419,12 @@ c_F = \operatorname{median}_{j \notin F}\ \frac{A_j^{\text{LiDAR}}}{\hat A_j},
 $$
 
 taken over the out-of-fold predictions of the *other two* folds (210–275 houses). No house
-contributes to its own correction. The factors are 1.05, 1.08 and 1.05.
+contributes to its own correction. This puts both methods on the same footing: the reference has
+one fitted scalar, $k$, estimated on the fold's training houses, and the model gets one fitted
+scalar, $c_F$, estimated on the same houses. A median bias near zero after calibration is
+therefore partly by construction and is not evidence of accuracy. The evidence that the factor
+generalises is that the three factors, each fitted without the fold's own houses, agree: 1.05,
+1.08 and 1.05.
 
 **Metrics and statistics.** The primary metric is the median absolute percentage error of roof
 surface area against the LiDAR measurement. For model-versus-reference comparisons we report the
@@ -404,7 +432,10 @@ difference in median absolute error with a 95% paired bootstrap interval [21] ov
 (5,000 resamples), and an exact two-sided sign test on per-house wins (the number of houses on
 which the model's absolute error is smaller, against Binomial(n, ½)). We use the two-sided test
 throughout, although the hypothesis that the model is better was stated in advance, so that the
-reported values are the conservative ones; the one-sided values are half as large. We also report the 90th
+reported values are the conservative ones; the one-sided values are half as large. Both the
+bootstrap and the sign test treat houses as independent. Neighbouring houses are not (they share
+builders, eras and imaging conditions), so §7.7 repeats every comparison while resampling spatial
+blocks and counting wins per sub-tile. We also report the 90th
 percentile, the share of houses within 10%, and the median signed error (bias). The *clean*
 subset contains the 159 houses with at most 10% of their roof in ignored facets, where the LiDAR
 truth is most reliable.
@@ -417,14 +448,16 @@ truth is most reliable.
 
 | | photo model | footprint × k |
 |---|---|---|
-| median \|error\|, 351 houses | **8.9%** | 11.5% |
+| median \|error\|, 351 houses | **8.94%** | 11.48% |
 | 90th percentile | **21.8%** | 27.7% |
 | within 10% | 53% | 47% |
 | median bias | +0.4% | +0.3% |
 | west / centre / east | **8.6 / 10.5 / 8.6%** | 12.3 / 11.7 / 8.9% |
-| clean houses (159) | **8.2%** | 13.5% |
+| clean houses (159) | **8.18%** | 13.48% |
 
-*Table 1. Roof surface area, out-of-fold, three seeds per fold, cross-fold calibration.*
+*Table 1. Roof surface area, out-of-fold, three seeds per fold, cross-fold calibration. Medians are
+given to two decimals because the differences quoted in the text are computed from unrounded
+values (8.94 − 11.48 = −2.54, reported as −2.5).*
 
 The model's median error is 2.5 points lower (95% CI −4.1 to −0.3), it is closer on 204 of 351
 houses (two-sided sign test p = 0.0027), and it is ahead in each of the three held-out areas,
@@ -437,10 +470,13 @@ to 5.3 points (−7.3 to −1.5).
 (b) Cumulative distribution of absolute error. (c) Median error by roof type (flat share of the
 labelled roof) and size, with 95% bootstrap intervals.*
 
-Figure 6c shows where the gain comes from. On the 22 mostly flat roofs, the footprint factor
+Figure 6c shows where the gain comes from. We call a roof *mostly flat* when more than half of
+its labelled area is flat (pitch < 5°); only 22 houses qualify, so the interval is wide. On these
+roofs the footprint factor
 overestimates by about a third (34.9% error), because $k$ encodes the slope of a typical pitched
 roof; the photograph shows the roof is flat, and the model's error is 10.4%. On roofs with no flat
-part the model still leads (8.5% vs 11.5%). On the 20 roofs smaller than 150 m², it is worse
+part the model still leads (8.5% vs 11.5%). On the 129 mixed roofs (5–50% flat) the two are level
+(9.2% vs 9.5%). On the 20 roofs smaller than 150 m², it is worse
 (15.3% vs 11.6%): small roofs are more often partly hidden by trees, and a missed section is a
 larger share of a small total.
 
@@ -478,8 +514,9 @@ sloped pixel scored 11.1%; choosing a footprint factor from the predicted flat s
 
 ### 7.3 Facing direction
 
-The area models (image-variant orientation loss) were right on only 18–39% of labelled roof
-pixels in their test areas, and on only 33–58% of their *training* houses, with large
+The seed-0 area models (image-variant orientation loss) were right on only 18–39% of labelled
+roof pixels in their test areas (east 18%, west 32%, centre 39%), and on only 33–58% of their
+*training* houses, with large
 differences between compass directions. That pointed at optimisation, not generalisation.
 
 Two features of the loss explained it. First, the orientation cross-entropy ran over the whole
@@ -496,7 +533,8 @@ better and stable, but at weight 1.0 it dominated the shared network:
 | median area error | **9.8%** | 26.5% | 11.8% |
 | pitch error, median per house | **8.5°** | 13.8° | 9.9° |
 
-*Table 2. Orientation loss ablation. A 9-way choice contributes about 1.0 to the loss against
+*Table 2. Orientation loss ablation, all three seeds of the west fold (the seed-0 model is the
+32% quoted above). A 9-way choice contributes about 1.0 to the loss against
 0.1–0.2 for the roof term.*
 
 Even at λ = 0.25 one network trades orientation against area. We therefore keep the area models
@@ -504,7 +542,7 @@ for extent, pitch and area, and train separate orientation models (roof loss, λ
 rotations), used inside the area models' roof mask. Across all nine orientation runs, single-model
 accuracy on held-out roof pixels is 61–69% (fold means 64–65%). Averaging the three seeds of each
 fold gives 70.8% over all 8.2 million labelled roof pixels (Figure 8). Of sloped pixels, 76% have
-the exact octant, 7% are one octant off, 12% are off by 90° and 4% are reversed. The 90° errors
+the exact octant, 7% are 45° off, 12% are 90° off, 1% are 135° off and 4% are reversed. The 90° errors
 are concentrated on adjacent facets of hipped roofs.
 
 ![Figure 8](figures/fig8.png)
@@ -530,7 +568,9 @@ is a ridge if both fall away from it and their downhill directions differ by at 
 if both fall away at a smaller angle, a valley if both fall towards it, and a break for a step
 in the same direction. Boundaries against the outside are an eave, a rake or a perimeter,
 depending on the local outward normal relative to the slope. A predicted edge pixel counts as
-correct if a labelled edge of the same type lies within 3 px (24 cm). To separate errors in the
+correct if a labelled edge of the same type lies within 3 px (24 cm); precision is the share of
+predicted edge pixels that are correct. Recall is the share of labelled edge pixels that have a
+predicted edge of the same type within 3 px. To separate errors in the
 rules from errors in the predictions, an *oracle* applies the same rules to the LiDAR
 orientation labels.
 
@@ -606,8 +646,8 @@ Bilthoven's $k$ (1.454).
 
 *Table 5. Bilthoven models applied to Heemstede, nothing re-tuned.*
 
-What the model reads directly from the image (extent, orientation and edges) transfers
-completely. Area does not: the model underestimates by 10.7%, and its advantage over the
+What the model reads directly from the image (extent, orientation and edges) transfers to
+Heemstede without loss. Area does not: the model underestimates by 10.7%, and its advantage over the
 reference is no longer significant. The cause is pitch (Figure 10b). Heemstede's roofs are
 somewhat steeper (area-weighted median 41.5° against 38.6°), but that does not explain it. For
 facets whose true pitch is 40–50° (mean 45.5° in both towns), the model reads 38.9° in Bilthoven
@@ -657,14 +697,69 @@ questions. The bootstrap concerns the median error, which improves because the l
 underestimates disappear; the sign test counts houses, many of which were already well measured.
 The pitch result is the clearer one (8.8° against 13.1° per facet, with the bias falling from
 −8.9° to −2.7°). The two-town models are single seeds; the 3.0-point gain is several times the
-0.5–1.0 point seed spread measured in §7.2, but a second and third seed would settle it.
+0.5–1.0 point seed spread measured in §7.2, but a second and third seed would settle it. §7.7
+shows that this comparison is also the one most sensitive to the teacher's settings.
+
+### 7.7 Robustness: spatial dependence and teacher settings
+
+**Spatial dependence.** The intervals above resample houses, which assumes their errors are
+independent. To test how much that matters, we repeat every model-versus-reference comparison
+twice more. The first resamples 250 m × 250 m blocks (houses assigned by footprint centroid;
+56–102 blocks per comparison). The second resamples whole 1 × 1.25 km sub-tiles (9 in Bilthoven,
+5 in Heemstede). With so few sub-tiles the percentile bootstrap is unreliable and tends to be too
+narrow, since every replicate mixes the same few tiles. At that scale we therefore also report
+the number of sub-tiles on which the model's median error is lower, with an exact two-sided sign
+test over sub-tiles. With five sub-tiles that test cannot go below p = 0.0625.
+
+| comparison | difference | houses | 250 m blocks | sub-tiles won (p) | sub-tiles, bootstrap |
+|---|---|---|---|---|---|
+| Table 1: Bilthoven | −2.54 | −4.1 to −0.3 | −3.8 to −0.3 | 8/9 (0.04) | −3.5 to −0.7 |
+| Table 1: Bilthoven, clean | −5.30 | −7.3 to −1.5 | −7.2 to −1.7 | 9/9 (0.0039) | −7.2 to −2.4 |
+| Table 5: Heemstede, untrained | −2.17 | −5.3 to 1.2 | −5.0 to 1.3 | 5/5 (0.06) | −4.7 to −0.1 |
+| Table 5: Heemstede, untrained, clean | −8.93 | −12.1 to −1.8 | −12.4 to −2.4 | 5/5 (0.06) | −12.9 to −3.4 |
+| Table 6: Heemstede, two-town vs reference | −5.88 | −8.5 to −2.9 | −7.7 to −2.9 | 4/5 (0.38) | −7.5 to −2.0 |
+| Table 6: Heemstede, two-town vs Bilthoven-only | −3.03 | −5.2 to −0.5 | −5.0 to −0.5 | 5/5 (0.06) | −4.4 to −1.2 |
+| Table 6: Bilthoven, two-town vs reference | −3.08 | −4.8 to −1.6 | −4.7 to −1.5 | 7/9 (0.18) | −5.5 to −1.0 |
+| Table 6: Bilthoven, two-town vs Bilthoven-only | −0.41 | −1.6 to 0.6 | −1.5 to 0.7 | 5/9 (1.00) | −1.8 to 0.8 |
+
+*Table 7. Difference in median absolute area error (model minus comparison, percentage points)
+with 95% intervals from resampling houses, 250 m blocks and sub-tiles
+(`scripts/block_bootstrap.py`).*
+
+Every interval that excluded zero when resampling houses still excludes it when resampling 250 m
+blocks, and the two borderline upper bounds are unchanged (Table 1: −3.8 to −0.3;
+Heemstede two-town vs Bilthoven-only: −5.0 to −0.5). The Bilthoven result also holds
+at sub-tile level: the model is better on 8/9 sub-tiles (p = 0.04). In Heemstede,
+five sub-tiles are too few for a sub-tile-level test to reach significance, although the
+two-town model wins on all five against the Bilthoven-only model.
+
+**Teacher settings.** §4.2 showed that a continuous version of the spacing rule would change the
+LiDAR roof area of 66 kept houses by a median of 1.6%. Table 8 re-scores the existing models
+against that alternative truth. Only the truth changes; the models are not retrained.
+
+| comparison | houses with changed truth | as used: difference (95% CI) | continuous rule: difference (95% CI) |
+|---|---|---|---|
+| Table 1: Bilthoven | 50 | −2.5 (−4.1 to −0.3) | −2.5 (−4.1 to −0.1) |
+| Table 5: Heemstede, untrained | 16 | −2.2 (−5.3 to 1.2) | −2.1 (−4.5 to 1.4) |
+| Table 6: Heemstede, two-town vs reference | 16 | −5.9 (−8.5 to −2.9) | −5.7 (−8.1 to −2.7) |
+| Table 6: Heemstede, two-town vs Bilthoven-only | 16 | −3.0 (−5.2 to −0.5) | −2.7 (−5.1 to 0.2) |
+| Table 6: Bilthoven, two-town vs reference | 50 | −3.1 (−4.8 to −1.6) | −3.3 (−5.1 to −1.6) |
+| Table 6: Bilthoven, two-town vs Bilthoven-only | 50 | −0.4 (−1.6 to 0.6) | −0.4 (−1.6 to 0.6) |
+
+*Table 8. Model-versus-comparison differences with the LiDAR truth as used and as the continuous
+spacing rule would give it (`scripts/sigma_sensitivity.py`).*
+
+All conclusions stand except one. The two-town gain over the Bilthoven-only model in Heemstede
+moves from −5.2 to −0.5 to −5.1 to 0.2, so its interval crosses zero. Together with the
+sign test above, this makes the area part of that result suggestive rather than established. The
+pitch part (§7.6) does not depend on it.
 
 ---
 
 ## 8. Discussion
 
 **What the photograph carries.** Extent, facing direction and the positions of roof edges are
-visible in a vertical photograph and are learned in a way that transfers between towns. Pitch is
+visible in a vertical photograph and are learned in a way that transferred between our two towns. Pitch is
 not directly visible. The model infers it from cues that depend on imaging conditions, and
 regresses it towards the training distribution. Since surface area scales with 1/cos θ,
 reading a 45° roof as 38° lowers its area by about 10%, close to the −10.7% bias seen in
@@ -703,11 +798,13 @@ evaluation that the rules were not the problem, which saved a round of work on t
   Vught (AHN5 and photographs from 2024) was prepared and not run.
 - **The truth is a pipeline,** not a survey. Its small-facet error (23% median below 10 m²) and
   traced outlines remain in the labels; gates and ignore masks reduce their effect but do not
-  remove it. No hand-measured roofs were used.
+  remove it. No independent ground truth was available. The LiDAR project defines a protocol for
+  hand measurements (`validation/PROTOCOL.md`), but it was never carried out and its measurement
+  table is empty, so every error in this paper is relative to the teacher.
 - **Building outlines are an input.** The area estimator uses the BAG outline to select the house,
   and the reference needs one to exist. Outside the Netherlands OpenStreetMap is the likely
   substitute, with uneven coverage.
-- **Dataset size.** 351 training houses per town is small. The quality gates keep about a third
+- **Dataset size.** 351 kept houses in Bilthoven and 147 in Heemstede is small. The quality gates keep about a third
   of candidates, and more sheets would increase the data roughly linearly.
 - **Edges.** Valleys and breaks are close to unusable; breaks need pitch-aware typing.
 - **Single seeds** for the two-town models.
@@ -721,7 +818,7 @@ mismatches between the two modalities are handled: relief displacement, encoding
 registration, and the teacher's sensitivity to point density. Trained on 351 automatically
 labelled houses, a standard U-Net measures roof surface area from 8 cm orthophotos with a median
 error of 8.9% against LiDAR, ahead of the footprint-factor method, and far ahead of it on flat
-roofs. The part of roof geometry that the photograph shows directly transfers to a new town. Pitch
+roofs. The part of roof geometry that the photograph shows directly transferred to a second town. Pitch
 does not, and with it area, until the new town is represented in training. For regions without
 LiDAR, the practical implication is that a small local labelled sample is likely to be worth
 more than further model refinement. The open test is whether a model trained on several towns
@@ -737,9 +834,10 @@ written by the scripts below, and every figure is drawn from those files by
 `scripts/paper_figures.py`.
 
 ```sh
-uv sync && uv run pytest                                   # 69 tests
+uv sync && uv run pytest                                   # 71 tests
 uv run python scripts/download_ahn.py --sheet 32CN1
-uv run python scripts/crop_sheet.py --sheet data/raw/ahn5/2023_C_32CN1.LAZ --subtiles 03 04 05 08 09 10 13 15 20
+uv run python scripts/crop_sheet.py --sheet data/raw/ahn5/2023_C_32CN1.LAZ \
+    --subtiles 03 04 05 08 09 10 13 15 20
 uv run python scripts/stage2_build_dataset.py --tile data/raw/ahn5/32CN1_04.LAZ   # per sub-tile
 uv run python scripts/stage2_summary.py 32CN1_03 32CN1_04 ...
 uv run python scripts/stage3_baseline.py
@@ -752,8 +850,19 @@ uv run python scripts/stage4_train.py --run s5w_west_geom_s0 --orient-weight 0.2
 uv run python scripts/stage5_edges.py
 uv run python scripts/pitch_per_facet.py
 uv run python scripts/new_town_eval.py --name heemstede 25CN1_01 25CN1_02 25CN1_06 25CN1_07 25CN1_13
+# two-town models, one per fold (west shown; centre: test 04 09 + 25CN1_02 07, val 13;
+# east: test 05 10 15 20 + 25CN1_13, val 13), scored per town
+uv run python scripts/stage4_train.py --run bt_west --orient-loss image \
+    --extra-tiles 25CN1_01 25CN1_02 25CN1_06 25CN1_07 25CN1_13 \
+    --test 32CN1_03 32CN1_08 32CN1_13 25CN1_01 25CN1_06 --val 32CN1_10
+uv run python scripts/stage4_evaluate.py --run bt_west --tiles 32CN1_03 32CN1_08 32CN1_13 --tag bilt
+uv run python scripts/stage4_evaluate.py --run bt_west --tiles 25CN1_01 25CN1_06 --tag heem
+uv run python scripts/stage4_evaluate.py --run cv_west --tiles 25CN1_01 25CN1_06 --tag heem
 uv run python scripts/two_town_compare.py
-uv run python scripts/paper_figures.py
+# robustness (§7.7) and figures
+uv run python scripts/block_bootstrap.py
+uv run python scripts/sigma_sensitivity.py
+uv run python scripts/paper_figures.py && uv run python scripts/paper_figures.py --numbers
 ```
 
 Per-stage reports with every intermediate result are in `docs/stage1_report.md` to
@@ -860,7 +969,7 @@ addresses appear in this paper or its figures.
 | the Delft shifts come from east–west flight strips | withdrawn: 1,000 houses show radial patterns around frame nadirs |
 | a 4-parameter relief model per house | ill-conditioned; replaced by pure relief once the ground test fixed s₀ = 0 |
 | the teacher's settings transfer between densities | they do not; a 0.3 m connectivity radius fragments planes at 15 pts/m² |
-| dropping houses with any uncertain facet keeps labels clean | removed 25% of usable houses and biased towards simple roofs; ignore masks kept 105 more |
+| dropping houses with more than a quarter of their roof uncertain keeps labels clean | excluded mainly complex roofs; raising the limit to half and masking uncertain facets kept 105 more houses |
 | ignoring uncertain facets is enough | the model learned to omit uncertain roof; extent needed its own label |
 | calibrating on one validation sub-tile | over-corrected (+3.8% bias); replaced by cross-fold calibration |
 | "training noise is about 2 points" | withdrawn: seeds vary 0.5–1 point; the 2 points compared different training sets |

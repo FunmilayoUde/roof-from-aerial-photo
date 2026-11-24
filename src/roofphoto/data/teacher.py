@@ -22,8 +22,11 @@ into fragments, and the median coverage falls to 0.53. So, per house, with spaci
   spacing  > 0.22 m: connectivity radius = 1.8 x spacing, the other spacing-dependent distances
                       scaled by the same factor.
 
-1.8 is the middle of the range that worked (1.6-2.1) in a sweep on 60 Bilthoven houses, checked
-on 60 others. Noise-related settings (0.12 m plane threshold) and geometric ones (1 m snap
+This makes a step at 0.22 m (connectivity radius 1.36 x spacing just below, 1.8 x just above).
+It falls in a gap of the spacing distribution (12 of 1,528 Stage 2 houses lie in 0.22-0.25 m);
+scripts/sigma_sensitivity.py measures what the continuous alternative would change. 1.8 scored best
+in a sweep on 60 Bilthoven houses (median footprint check 3.5%, 21 of 60 passing; 1.6-2.1 all
+within 0.4 points), checked on 60 others. Noise-related settings (0.12 m plane threshold) and geometric ones (1 m snap
 distance) are not scaled. See docs/stage2_report.md.
 """
 
@@ -61,7 +64,9 @@ def spacing_scale(spacing_m: float) -> float:
     """Factor on the pipeline's spacing-dependent distances (1.0 = its validated settings)."""
     if spacing_m <= SPACING_REF_M:
         return 1.0
-    return max(1.0, CONNECT_PER_SPACING * spacing_m / 0.3)
+    # Above SPACING_REF_M this is always > 1.32: a deliberate step, so that the validated settings
+    # apply unchanged across the whole density range the LiDAR project was tested on.
+    return CONNECT_PER_SPACING * spacing_m / 0.3
 
 
 def build_roof_scaled(xyz: np.ndarray, density: float, scale: float) -> RoofModel:

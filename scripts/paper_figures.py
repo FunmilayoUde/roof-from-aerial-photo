@@ -670,13 +670,7 @@ def fig7_examples_and_fig8_confusion() -> None:
     acc = np.trace(conf) / conf.sum()
     ax.set_title(f"(a) orientation, {conf.sum() / 1e6:.1f} M roof px, accuracy {acc:.1%} (row %)", loc="left")
     ax = axs[1]
-    sl = conf[1:, 1:]
-    steps = np.zeros(5)
-    for i in range(8):
-        for j in range(8):
-            k = abs(i - j)
-            steps[min(k, 8 - k)] += sl[i, j]
-    steps /= steps.sum()
+    steps = orientation_steps(conf)
     ax.bar(range(5), steps * 100, color=[MODEL_C, "#7fa3d1", BASE_C, "#e0a768", "#b03030"])
     for k, v in enumerate(steps):
         ax.text(k, v * 100 + 1, f"{v:.0%}", ha="center", fontsize=7.5)
@@ -687,6 +681,32 @@ def fig7_examples_and_fig8_confusion() -> None:
     save(fig, 8)
     (ROOT / "outputs/paper").mkdir(parents=True, exist_ok=True)
     np.save(ROOT / "outputs/paper/orientation_confusion.npy", conf)
+
+
+def orientation_steps(conf: np.ndarray) -> np.ndarray:
+    """Share of sloped pixels (true and predicted sloped) off by 0, 45, 90, 135 and 180 degrees."""
+    sl = conf[1:, 1:]
+    steps = np.zeros(5)
+    for i in range(8):
+        for j in range(8):
+            k = abs(i - j)
+            steps[min(k, 8 - k)] += sl[i, j]
+    return steps / steps.sum()
+
+
+def numbers() -> None:
+    """Derived numbers quoted in the paper's text, from saved outputs: outputs/paper/numbers.json."""
+    conf = np.load(ROOT / "outputs/paper/orientation_confusion.npy")
+    steps = orientation_steps(conf)
+    s2 = json.loads((ROOT / "outputs/stage2/summary_all.json").read_text())
+    out = {
+        "orientation_ensemble_accuracy": round(float(np.trace(conf) / conf.sum()), 4),
+        "orientation_roof_pixels": int(conf.sum()),
+        "sloped_angular_error_share": {k: round(float(v), 4) for k, v in zip(["0", "45", "90", "135", "180"], steps)},
+        "bilthoven_kept_shift_m": s2["registration_kept_houses"]["shift_size_m"],
+    }
+    (ROOT / "outputs/paper/numbers.json").write_text(json.dumps(out, indent=2))
+    print(json.dumps(out, indent=2))
 
 
 def fig9_edges() -> None:
@@ -858,7 +878,11 @@ FIGS = {
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--only", nargs="+", type=int, default=list(FIGS))
+    ap.add_argument("--numbers", action="store_true", help="only write outputs/paper/numbers.json")
     args = ap.parse_args()
+    if args.numbers:
+        numbers()
+        return
     for n in args.only:
         FIGS[8 - 1 if n == 8 else n]()
 
