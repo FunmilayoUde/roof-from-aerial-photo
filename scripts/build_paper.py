@@ -6,6 +6,11 @@ Maths ($...$ and $$...$$) is set aside before Markdown runs, so underscores and 
 it survive, and is typeset by KaTeX in the page. The PDF is printed by headless Google Chrome
 (macOS path below), which loads KaTeX from the CDN first. Writes docs/paper/paper.html and
 docs/paper/paper.pdf; figures are referenced from docs/paper/figures/.
+
+    uv run --with markdown python scripts/build_paper.py --site
+
+also writes site/ (not in git) for any static host: index.html (the paper, with a link bar to the
+PDF and the code), figures/ and paper.pdf. Deploy that folder as it is, e.g. to Netlify.
 """
 
 from __future__ import annotations
@@ -13,6 +18,7 @@ from __future__ import annotations
 import argparse
 import html
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -21,6 +27,10 @@ import markdown
 ROOT = Path(__file__).resolve().parents[1]
 PAPER = ROOT / "docs/paper"
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+DESCRIPTION = (
+    "A U-Net trained only on labels from an airborne LiDAR roof pipeline measures roof area, pitch, "
+    "facing direction and edges from 8 cm aerial orthophotos."
+)
 KATEX = "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist"
 
 CSS = """
@@ -93,6 +103,7 @@ def build_html() -> Path:
     page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="{DESCRIPTION}">
 <title>Roof Geometry from Aerial Orthophotos under Airborne LiDAR Supervision</title>
 <link rel="stylesheet" href="{KATEX}/katex.min.css">
 <script defer src="{KATEX}/katex.min.js"></script>
@@ -125,14 +136,40 @@ def build_pdf(page: Path) -> Path:
     return pdf
 
 
+LINK_BAR = """<nav class="links" aria-label="Downloads">
+  <a href="paper.pdf">PDF</a> · <a href="https://github.com/FunmilayoUde/roof-from-aerial-photo">Code</a> ·
+  <a href="https://roof-measurement-lidar.netlify.app/">LiDAR write-up</a>
+</nav>
+<style>
+nav.links { text-align: center; font-size: 0.85rem; margin: 0 0 1.2rem; color: var(--muted); }
+@media print { nav.links { display: none; } }
+</style>
+"""
+
+
+def build_site(page: Path, out: Path = ROOT / "site") -> Path:
+    """The paper as a static site: index.html, figures/ and paper.pdf."""
+    if out.exists():
+        shutil.rmtree(out)
+    out.mkdir()
+    html_text = page.read_text().replace("<body>\n", "<body>\n" + LINK_BAR, 1)
+    (out / "index.html").write_text(html_text)
+    shutil.copytree(PAPER / "figures", out / "figures")
+    shutil.copy(PAPER / "paper.pdf", out / "paper.pdf")
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--no-pdf", action="store_true")
+    ap.add_argument("--site", action="store_true", help="also write site/ for static hosting")
     args = ap.parse_args()
     page = build_html()
     print(page)
     if not args.no_pdf:
         print(build_pdf(page))
+    if args.site:
+        print(build_site(page))
 
 
 if __name__ == "__main__":

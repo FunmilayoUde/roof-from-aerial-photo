@@ -4,7 +4,8 @@ Trains a model to measure roofs from aerial photos alone, using the output of th
 [LiDAR roof pipeline](https://github.com/FunmilayoUde/roof-measurement-from-lidar)
 ([write-up](https://roof-measurement-lidar.netlify.app/); `roofrecon`, expected in the sibling
 folder `../3D reconstruction `) as training labels. See [HANDOFF.md](HANDOFF.md) for the plan and
-the paper, **[docs/paper/paper.md](docs/paper/paper.md)** ([PDF](docs/paper/paper.pdf)), for the
+the paper, **[docs/paper/paper.md](docs/paper/paper.md)** ([PDF](docs/paper/paper.pdf);
+online at [roof-measurement-photo.netlify.app](https://roof-measurement-photo.netlify.app/)), for the
 method, results, ablations and limitations.
 
 ## Results
@@ -45,7 +46,7 @@ folder name ends in a space; `pyproject.toml` points at it through `[tool.uv.sou
 | 4. First model | `scripts/stage4_train.py`, `scripts/stage4_evaluate.py` per fold, then `scripts/stage4_cv_summary.py` | [docs/stage4_report.md](docs/stage4_report.md) |
 | 5. Orientation, edges, pitch | `scripts/stage4_train.py --orient-weight 0.25`, `scripts/stage5_edges.py`, `scripts/pitch_per_facet.py` | [docs/stage5_notes.md](docs/stage5_notes.md) |
 | Second town | `scripts/download_ahn.py`, `crop_sheet.py`, Stage 2 per sub-tile, then `scripts/new_town_eval.py` and `scripts/two_town_compare.py` | [docs/second_town_report.md](docs/second_town_report.md) |
-| Paper | `scripts/paper_figures.py`, then `uv run --with markdown python scripts/build_paper.py` | [docs/paper/paper.md](docs/paper/paper.md) |
+| Paper | `scripts/paper_figures.py`, then `uv run --with markdown python scripts/build_paper.py` (`--site` also writes `site/` for Netlify) | [docs/paper/paper.md](docs/paper/paper.md) |
 
 Stage 1 downloads the PDOK photo around a house, crops it like the LiDAR pipeline does, measures
 how far the photo's roof edges sit from the LiDAR edges, and writes overlays to

@@ -7,3 +7,4 @@ __pycache__/
 /data/
 /outputs/
 .DS_Store
+/site/
