@@ -8,30 +8,25 @@ November 2026 · code: [github.com/FunmilayoUde/roof-from-aerial-photo](https://
 
 ## Abstract
 
-Airborne LiDAR measures roof geometry well but covers a small part of the world. Aerial imagery
-covers almost all of it. We study whether a convolutional network can learn to measure roofs from
-8 cm orthophotos when its only supervision is the output of a LiDAR roof-reconstruction pipeline,
-with no manual annotation. Three problems stand between the LiDAR measurements and usable image
-labels, and we address each one. Relief displacement shifts roofs by 0.2–0.8 m (10th–90th percentile) relative to the
-LiDAR; we establish this with a ground-level test and correct it per house with a one-parameter
-relief model, fitted by edge registration. Registration turns out to depend on the JPEG encoding
-of each image request, so we register every house on two renderings and keep only houses whose
-shift repeats. The LiDAR pipeline itself degrades at lower point density; we rescale its
-neighbourhood radii to the measured point spacing. A U-Net trained on the resulting 351 houses
-predicts roof extent, pitch and facing direction per pixel. Under spatially blocked
-cross-validation in Bilthoven (NL), it estimates roof surface area with a median absolute error
-of 8.9% against the LiDAR measurement, compared with 11.5% for the standard footprint-times-factor
-method (paired difference −2.5 points, 95% CI −4.1 to −0.3, or −3.8 to −0.3 when
-resampling 250 m spatial blocks; closer on 204 of 351 houses, two-sided sign test p = 0.003).
-The largest gain is on flat roofs. Roof edges typed by geometric rules from the predicted
-orientation reach 0.53 precision and 0.43 recall within 24 cm; the same rules applied to the
-LiDAR labels reach 0.84–0.98 precision for every type except breaks, so the predictions,
-not the rules, limit edge quality. Applied without retraining to a second
-town, the model keeps its segmentation and orientation quality but reads pitch about 7° lower than on
-equally steep roofs in Bilthoven (mean bias −8.5° per facet), which biases area by −10.7%. Adding the second town's houses to training removes the offset
-(three-seed ensembles: 7.3% area error there and 7.5% in Bilthoven, where it also
-improves on the Bilthoven-only models). We report the negative results and the conclusions we
-withdrew along the way, which in several cases changed the method more than the positive ones.
+Airborne LiDAR measures roof geometry well but covers little of the world; aerial imagery covers
+almost all of it. We train a convolutional network to measure roofs from 8 cm orthophotos with the
+output of a LiDAR roof-reconstruction pipeline as its only supervision, without manual annotation.
+Three mismatches separate the LiDAR measurements from usable image labels. Relief displacement
+shifts roofs by 0.2–0.8 m; a ground-level test confirms the cause, and a one-parameter relief model
+fitted by edge registration corrects it per house. Registration depends on the JPEG encoding of each
+image request, so every house is registered on two renderings and kept only if the shift repeats.
+The LiDAR pipeline degrades at lower point density, so its neighbourhood radii are rescaled to the
+measured point spacing. A U-Net trained on the resulting 351 houses predicts roof extent, pitch and
+facing direction per pixel. Under spatially blocked cross-validation in Bilthoven (NL), it estimates
+roof surface area with a median absolute error of 8.9% against LiDAR, versus 11.5% for the standard
+footprint-times-factor method (difference −2.5 points, 95% CI −4.1 to −0.3; closer on 204 of 351
+houses, two-sided sign test p = 0.003; robust to resampling 250 m blocks). The largest gain is on
+flat roofs. Rule-typed roof edges reach 0.53 precision and 0.43 recall within 24 cm; the same rules
+reach 0.84–0.98 precision on the LiDAR labels. Applied to a second town without retraining, the
+model keeps its segmentation and orientation quality but reads pitch about 7° low on equally steep
+roofs, biasing area by −10.7%; adding that town's houses to training removes the offset (7.3% area
+error there, 7.5% in Bilthoven). We also report the negative results and withdrawn conclusions that
+shaped the method.
 
 ---
 
@@ -936,9 +931,9 @@ addresses appear in this paper or its figures.
 
 [17] L. Mou, X. X. Zhu. IM2HEIGHT: Height estimation from single monocular imagery via fully residual convolutional-deconvolutional network. arXiv:1802.10249, 2018.
 
-[18] G. Christie, R. R. R. M. Abujder, K. Foster, S. Hagstrom, G. D. Hager, M. Z. Brown. Learning geocentric object pose in oblique monocular images. *CVPR*, 2020.
+[18] G. Christie, R. R. R. Munoz Abujder, K. Foster, S. Hagstrom, G. D. Hager, M. Z. Brown. Learning geocentric object pose in oblique monocular images. *CVPR*, 2020.
 
-[19] P. R. Wolf, B. A. Dewitt, B. E. Wilkinson. *Elements of Photogrammetry with Applications in GIS*, 4th ed. McGraw-Hill, 2014.
+[19] P. R. Wolf, B. A. DeWitt, B. E. Wilkinson. *Elements of Photogrammetry with Application in GIS*, 4th ed. McGraw-Hill Education, 2014.
 
 [20] H. R. Künsch. The jackknife and the bootstrap for general stationary observations. *Annals of Statistics* 17(3), 1989.
 
@@ -946,7 +941,7 @@ addresses appear in this paper or its figures.
 
 [22] D. R. Roberts et al. Cross-validation strategies for data with temporal, spatial, hierarchical, or phylogenetic structure. *Ecography* 40(8), 2017.
 
-[23] P. Ploton et al. Spatial validation reveals poor predictive performance of large-scale ecological mapping models. *Nature Communications* 11, 2020.
+[23] P. Ploton et al. Spatial validation reveals poor predictive performance of large-scale ecological mapping models. *Nature Communications* 11, 4540, 2020.
 
 [24] B. Frénay, M. Verleysen. Classification in the presence of label noise: A survey. *IEEE Transactions on Neural Networks and Learning Systems* 25(5), 2014.
 
@@ -956,7 +951,7 @@ addresses appear in this paper or its figures.
 
 [27] R. Girshick. Fast R-CNN. *ICCV*, 2015.
 
-[28] D.-H. Lee. Pseudo-label: The simple and efficient semi-supervised learning method for deep neural networks. *ICML Workshop on Challenges in Representation Learning*, 2013.
+[28] D.-H. Lee. Pseudo-label: The simple and efficient semi-supervised learning method for deep neural networks. *ICML 2013 Workshop: Challenges in Representation Learning*, 2013.
 
 [29] P. Kaiser, J. D. Wegner, A. Lucchi, M. Jaggi, T. Hofmann, K. Schindler. Learning aerial image segmentation from online maps. *IEEE Transactions on Geoscience and Remote Sensing* 55(11), 2017.
 
